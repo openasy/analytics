@@ -1,0 +1,37 @@
+# Analytics. Sites are listed in analytics.yaml, and their pages load one script from here.
+#
+#   openssl rand -hex 32 > openasy-kek   # analytics's key: sign-in secrets (ADR 0021). Keep it with your backups
+#   docker compose up -d
+#   docker compose logs analytics | grep 'no owner yet'   # the one-time link that creates the owner account
+services:
+  analytics:
+    image: ghcr.io/openasy/analytics:0.1.0
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: [/tmp]
+    ports:
+      - "127.0.0.1:8080:8080" # UI, API and the sites' script; put a TLS proxy in front so the sites can reach it
+    volumes:
+      - analytics-data:/data # SQLite database: visits, events and daily totals
+      - ./config:/config:ro # analytics.yaml, the sites; mount the folder so an editor's save reaches it
+    secrets:
+      - openasy-kek # mounted at /run/secrets/openasy-kek
+    environment:
+      # The address people open Analytics at, and the sites' pages load the script from; with a TLS proxy, its https:// URL.
+      ANALYTICS_PUBLIC_URL: ${ANALYTICS_PUBLIC_URL:-http://localhost:8080}
+      ANALYTICS_CONFIG: /config/analytics.yaml
+      # The key a site's serverKey names, for events from its servers:
+      # ANALYTICS_SHOP_KEY: ${ANALYTICS_SHOP_KEY}
+      # Sign in with your identity provider (OIDC), see the README:
+      # OPENASY_OIDC_ISSUER: https://login.example.com
+      # OPENASY_OIDC_CLIENT_ID: analytics
+      # OPENASY_OIDC_CLIENT_SECRET: ${OPENASY_OIDC_CLIENT_SECRET}
+
+volumes:
+  analytics-data:
+
+secrets:
+  openasy-kek:
+    file: ./openasy-kek

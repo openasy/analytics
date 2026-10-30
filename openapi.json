@@ -1,0 +1,1979 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "OpenAsy Analytics API",
+    "version": "0.1.0",
+    "summary": "How people use your websites, from one script tag, kept in the install.",
+    "description": "Every screen of analytics uses this API, and so can your scripts (ADR 0014). Within `/api/v1` changes are additive only; anything removed is deprecated first (ADR 0024). Errors use Problem Details (RFC 9457).\n\nPages send what happened with `/api/v1/collect`, from the site's script at `/s/<site>.js`. Sites are set in the sites file, never through the API. Everything else takes the session of a signed-in person or an API token, and each operation names the role it needs (`x-openasy-role`: viewer, editor, admin; ADR 0003).\n\nSign-in, members and API tokens are under `/api/v1/auth`, provided by [@openasy/auth](https://github.com/openasy/auth#routes).",
+    "license": {
+      "name": "AGPL-3.0-only",
+      "identifier": "AGPL-3.0-only"
+    }
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "This analytics"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Collect",
+      "description": "How pages and sites' servers send what happened."
+    },
+    {
+      "name": "Sites",
+      "description": "The sites, as the sites file sets them."
+    },
+    {
+      "name": "Reports",
+      "description": "Visitors, pages, sources, visits and goals."
+    },
+    {
+      "name": "Visitors",
+      "description": "A visitor's data, for requests under GDPR and KVKK."
+    },
+    {
+      "name": "Product",
+      "description": "Version and overview of this analytics."
+    }
+  ],
+  "paths": {
+    "/api/v1/collect": {
+      "post": {
+        "operationId": "collect",
+        "tags": [
+          "Collect"
+        ],
+        "summary": "Send what happened on a page",
+        "description": "What the script sends, as text/plain so navigator.sendBeacon needs no preflight; JSON is taken too. From a page, the Origin must be one of the site's domains, and the answer carries it back in Access-Control-Allow-Origin. From a site's servers, send the key its serverKey names in x-analytics-key instead. Batches from crawlers are acknowledged and dropped. The body may be gzipped, up to 64 KiB unpacked.",
+        "security": [
+          {},
+          {
+            "serverKey": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "text/plain": {
+              "schema": {
+                "$ref": "#/components/schemas/Batch"
+              }
+            },
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Batch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Taken. Events from another origin or an ignored path are dropped and counted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Collected"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "413": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "429": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/s/{site}.js": {
+      "get": {
+        "operationId": "script",
+        "tags": [
+          "Collect"
+        ],
+        "summary": "The site's script",
+        "description": "The script tag of a site: `<script defer src=\".../s/shop.js\"></script>`. It carries the site's settings from the file and may be cached for five minutes.",
+        "security": [],
+        "parameters": [
+          {
+            "name": "site",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z0-9-]{1,32}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The script.",
+            "content": {
+              "text/javascript": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No site of that name in the sites file; a comment that says so.",
+            "content": {
+              "text/javascript": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The tracker is not built into this image.",
+            "content": {
+              "text/javascript": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/summary": {
+      "get": {
+        "operationId": "getSummary",
+        "tags": [
+          "Product"
+        ],
+        "summary": "Overview",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Needs the viewer role.",
+        "responses": {
+          "200": {
+            "description": "The last day of every site, and the sites file.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Summary"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      }
+    },
+    "/api/v1/sites": {
+      "get": {
+        "operationId": "listSites",
+        "tags": [
+          "Sites"
+        ],
+        "summary": "Sites",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Sites are added, changed and removed in the sites file (ANALYTICS_CONFIG) only. Needs the viewer role.",
+        "responses": {
+          "200": {
+            "description": "The sites as the file sets them, with what each sent today.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiteList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      }
+    },
+    "/api/v1/report": {
+      "get": {
+        "operationId": "getReport",
+        "tags": [
+          "Reports"
+        ],
+        "summary": "A site's report",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Needs the viewer role.",
+        "parameters": [
+          {
+            "name": "site",
+            "in": "query",
+            "required": true,
+            "description": "The site, by its name in the sites file.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "description": "Today (1) or the last 7, 30 or 90 days.",
+            "schema": {
+              "type": "integer",
+              "enum": [
+                1,
+                7,
+                30,
+                90
+              ],
+              "default": 7
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Visitors, pages, sources, devices, events, clicks and goals over the period.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Report"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      }
+    },
+    "/api/v1/visits": {
+      "get": {
+        "operationId": "listVisits",
+        "tags": [
+          "Reports"
+        ],
+        "summary": "Visits",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Needs the viewer role.",
+        "parameters": [
+          {
+            "name": "site",
+            "in": "query",
+            "required": true,
+            "description": "The site, by its name in the sites file.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "visitor",
+            "in": "query",
+            "required": false,
+            "description": "Only this visitor's visits.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "user",
+            "in": "query",
+            "required": false,
+            "description": "Only visits with this user id of the site.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 100
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "The previous page's nextCursor.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Visits, newest activity first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VisitList"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      }
+    },
+    "/api/v1/visits/{id}": {
+      "get": {
+        "operationId": "getVisit",
+        "tags": [
+          "Reports"
+        ],
+        "summary": "A visit",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Needs the viewer role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "site",
+            "in": "query",
+            "required": true,
+            "description": "The site, by its name in the sites file.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The visit with everything it sent, in order.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VisitDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      }
+    },
+    "/api/v1/visitors/{id}": {
+      "get": {
+        "operationId": "exportVisitor",
+        "tags": [
+          "Visitors"
+        ],
+        "summary": "Export a visitor's data",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "For a request under GDPR Art. 15 or KVKK Art. 11. Needs the admin role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "site",
+            "in": "query",
+            "required": true,
+            "description": "The site, by its name in the sites file.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Every visit and event kept about the visitor.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VisitorExport"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "admin"
+      },
+      "delete": {
+        "operationId": "deleteVisitor",
+        "tags": [
+          "Visitors"
+        ],
+        "summary": "Delete a visitor's data",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "For a request under GDPR Art. 17 or KVKK Art. 11. Needs the admin role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "site",
+            "in": "query",
+            "required": true,
+            "description": "The site, by its name in the sites file.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted. Daily totals, which name nobody, stay."
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "admin"
+      }
+    },
+    "/api/v1/version": {
+      "get": {
+        "operationId": "getVersion",
+        "tags": [
+          "Product"
+        ],
+        "summary": "Version",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The running version.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Version"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/products": {
+      "get": {
+        "operationId": "listProducts",
+        "tags": [
+          "Product"
+        ],
+        "summary": "Other products of this install",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Needs the viewer role.",
+        "responses": {
+          "200": {
+            "description": "From OPENASY_PRODUCTS, for the product switcher.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      }
+    },
+    "/healthz": {
+      "get": {
+        "operationId": "liveness",
+        "tags": [
+          "Product"
+        ],
+        "summary": "Liveness",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The process is running.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "operationId": "readiness",
+        "tags": [
+          "Product"
+        ],
+        "summary": "Readiness",
+        "description": "Ready while the database answers.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Ready to serve.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The database is unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "operationId": "metrics",
+        "tags": [
+          "Product"
+        ],
+        "summary": "Prometheus metrics",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Metrics in the Prometheus text format.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "session": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "__Host-openasy-session",
+        "description": "The browser session after signing in (`openasy-session` when analytics runs on plain http://localhost). Requests that change something must come from the analytics origin."
+      },
+      "apiToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "An API token created under Settings → API tokens (`oa_analytics_...`): one role, always an expiry (ADR 0003)."
+      },
+      "adminToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Only when analytics is started by its tests or a local script: one shared token with the admin role. A production install does not have it."
+      },
+      "serverKey": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-analytics-key",
+        "description": "The value of the environment variable a site's serverKey names, for events sent from the site's servers."
+      }
+    },
+    "responses": {
+      "Problem": {
+        "description": "An error, as RFC 9457 Problem Details.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Problem": {
+        "type": "object",
+        "required": [
+          "type",
+          "title",
+          "status",
+          "code"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "format": "uri"
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer"
+          },
+          "code": {
+            "type": "string",
+            "enum": [
+              "invalid-token",
+              "invalid-json",
+              "invalid-body",
+              "invalid-batch",
+              "forbidden-origin",
+              "not-found",
+              "rate-limited",
+              "payload-too-large",
+              "internal-error",
+              "unauthenticated",
+              "invalid-credentials",
+              "mfa-required",
+              "mfa-setup-required",
+              "forbidden",
+              "cross-site"
+            ],
+            "description": "Stable; match on this."
+          },
+          "detail": {
+            "type": "string"
+          }
+        }
+      },
+      "ProductLink": {
+        "type": "object",
+        "required": [
+          "id",
+          "url"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The product, as OpenAsy names it.",
+            "examples": [
+              "infrastructure"
+            ]
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "The address people open it at.",
+            "examples": [
+              "https://infra.example.com"
+            ]
+          }
+        }
+      },
+      "ProductList": {
+        "type": "object",
+        "required": [
+          "products"
+        ],
+        "properties": {
+          "products": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProductLink"
+            }
+          }
+        }
+      },
+      "Version": {
+        "type": "object",
+        "required": [
+          "product",
+          "version"
+        ],
+        "properties": {
+          "product": {
+            "const": "analytics"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "Status": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "BatchEvent": {
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false,
+        "description": "One thing that happened on a page. Form values are not part of it.",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "pageview",
+              "leave",
+              "click",
+              "event",
+              "forget"
+            ],
+            "description": "forget deletes everything kept about the visitor: the page withdrew consent."
+          },
+          "at": {
+            "type": "number",
+            "description": "Milliseconds since 1970 on the page's clock; trusted within a day of the server's."
+          },
+          "url": {
+            "type": "string",
+            "maxLength": 2048,
+            "description": "The page's address. Required but for forget. Only utm_* and the site's own query parameters are kept."
+          },
+          "title": {
+            "type": "string",
+            "description": "pageview: the page's title."
+          },
+          "referrer": {
+            "type": "string",
+            "description": "pageview: where the visitor came from."
+          },
+          "target": {
+            "type": "string",
+            "description": "click: a short selector of the element."
+          },
+          "text": {
+            "type": "string",
+            "description": "click: what the element says, up to 80 characters."
+          },
+          "href": {
+            "type": "string",
+            "description": "click: the link it follows."
+          },
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.:-]{1,64}$",
+            "description": "event: its name."
+          },
+          "props": {
+            "type": "object",
+            "maxProperties": 20,
+            "additionalProperties": {
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ]
+            },
+            "description": "event: up to 20 properties."
+          },
+          "duration": {
+            "type": "number",
+            "minimum": 0,
+            "description": "leave: milliseconds on the page."
+          },
+          "scroll": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "leave: how far down the page was read, in percent."
+          }
+        }
+      },
+      "Batch": {
+        "type": "object",
+        "required": [
+          "site",
+          "visitor",
+          "session",
+          "events"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "site": {
+            "type": "string",
+            "description": "The site's name in the sites file."
+          },
+          "visitor": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{8,64}$",
+            "description": "Random, made by the script and kept in the site's localStorage."
+          },
+          "session": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{8,64}$",
+            "description": "Random, made by the script; a visit ends after 30 minutes without activity."
+          },
+          "user": {
+            "type": "string",
+            "maxLength": 128,
+            "description": "The site's own opaque id for the person. Email addresses and phone numbers are refused."
+          },
+          "events": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 50,
+            "items": {
+              "$ref": "#/components/schemas/BatchEvent"
+            }
+          }
+        }
+      },
+      "Collected": {
+        "type": "object",
+        "required": [
+          "accepted",
+          "dropped"
+        ],
+        "properties": {
+          "accepted": {
+            "type": "integer"
+          },
+          "dropped": {
+            "type": "integer"
+          }
+        }
+      },
+      "Goal": {
+        "type": "object",
+        "required": [
+          "name",
+          "path",
+          "event"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "event": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ConfigFile": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "description": "The sites file and whether it is applied; null before it was first read.",
+        "required": [
+          "path",
+          "appliedAt",
+          "sites",
+          "error",
+          "warnings"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "appliedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "sites": {
+            "type": "integer"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the file on disk is not applied; the last good version stays in use."
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "Site": {
+        "type": "object",
+        "required": [
+          "name",
+          "domains",
+          "consent",
+          "script",
+          "goals",
+          "query",
+          "ignore",
+          "keep",
+          "rateLimit",
+          "serverKey",
+          "today",
+          "lastEventAt"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "domains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "consent": {
+            "type": "string",
+            "enum": [
+              "none",
+              "required"
+            ]
+          },
+          "script": {
+            "type": "string",
+            "format": "uri",
+            "description": "The address of the site's script tag."
+          },
+          "goals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Goal"
+            }
+          },
+          "query": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ignore": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "keep": {
+            "type": "object",
+            "required": [
+              "events",
+              "days"
+            ],
+            "properties": {
+              "events": {
+                "type": "integer"
+              },
+              "days": {
+                "type": "integer"
+              }
+            }
+          },
+          "rateLimit": {
+            "type": "integer"
+          },
+          "serverKey": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "required": [
+              "variable",
+              "set"
+            ],
+            "properties": {
+              "variable": {
+                "type": "string"
+              },
+              "set": {
+                "type": "boolean"
+              }
+            }
+          },
+          "today": {
+            "type": "object",
+            "required": [
+              "visitors",
+              "pageviews"
+            ],
+            "properties": {
+              "visitors": {
+                "type": "integer"
+              },
+              "pageviews": {
+                "type": "integer"
+              }
+            }
+          },
+          "lastEventAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "SiteList": {
+        "type": "object",
+        "required": [
+          "sites",
+          "file"
+        ],
+        "properties": {
+          "sites": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Site"
+            }
+          },
+          "file": {
+            "$ref": "#/components/schemas/ConfigFile"
+          }
+        }
+      },
+      "Summary": {
+        "type": "object",
+        "required": [
+          "sites",
+          "file",
+          "visitors24h",
+          "visits24h",
+          "pageviews24h",
+          "live",
+          "lastEventAt"
+        ],
+        "properties": {
+          "sites": {
+            "type": "integer"
+          },
+          "file": {
+            "$ref": "#/components/schemas/ConfigFile"
+          },
+          "visitors24h": {
+            "type": "integer"
+          },
+          "visits24h": {
+            "type": "integer"
+          },
+          "pageviews24h": {
+            "type": "integer"
+          },
+          "live": {
+            "type": "integer",
+            "description": "Visitors active in the last five minutes."
+          },
+          "lastEventAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "Report": {
+        "type": "object",
+        "required": [
+          "site",
+          "days",
+          "from",
+          "totals",
+          "series",
+          "pages",
+          "entries",
+          "exits",
+          "sources",
+          "campaigns",
+          "browsers",
+          "systems",
+          "devices",
+          "events",
+          "clicks",
+          "goals"
+        ],
+        "properties": {
+          "site": {
+            "type": "string"
+          },
+          "days": {
+            "type": "integer",
+            "enum": [
+              1,
+              7,
+              30,
+              90
+            ]
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "totals": {
+            "type": "object",
+            "required": [
+              "visitors",
+              "visits",
+              "pageviews",
+              "bounceRate",
+              "duration"
+            ],
+            "properties": {
+              "visitors": {
+                "type": "integer"
+              },
+              "visits": {
+                "type": "integer"
+              },
+              "pageviews": {
+                "type": "integer"
+              },
+              "bounceRate": {
+                "type": "number"
+              },
+              "duration": {
+                "type": "integer",
+                "description": "Average visit, in seconds."
+              }
+            }
+          },
+          "series": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "day",
+                "visitors",
+                "visits",
+                "pageviews"
+              ],
+              "properties": {
+                "day": {
+                  "type": "string"
+                },
+                "visitors": {
+                  "type": "integer"
+                },
+                "visits": {
+                  "type": "integer"
+                },
+                "pageviews": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "pages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "path",
+                "title",
+                "views",
+                "visitors",
+                "time",
+                "scroll"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "views": {
+                  "type": "integer"
+                },
+                "visitors": {
+                  "type": "integer"
+                },
+                "time": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "scroll": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              }
+            }
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "path",
+                "visits",
+                "visitors"
+              ],
+              "properties": {
+                "path": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "visits": {
+                  "type": "integer"
+                },
+                "visitors": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "exits": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "path",
+                "visits",
+                "visitors"
+              ],
+              "properties": {
+                "path": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "visits": {
+                  "type": "integer"
+                },
+                "visitors": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "source",
+                "visits",
+                "visitors"
+              ],
+              "properties": {
+                "source": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "visits": {
+                  "type": "integer"
+                },
+                "visitors": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "campaigns": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "source",
+                "medium",
+                "campaign",
+                "visits",
+                "visitors"
+              ],
+              "properties": {
+                "source": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "medium": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "campaign": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "visits": {
+                  "type": "integer"
+                },
+                "visitors": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "browsers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "visits",
+                "visitors"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "visits": {
+                  "type": "integer"
+                },
+                "visitors": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "systems": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "visits",
+                "visitors"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "visits": {
+                  "type": "integer"
+                },
+                "visitors": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "devices": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "visits",
+                "visitors"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "visits": {
+                  "type": "integer"
+                },
+                "visitors": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "count",
+                "visitors"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "count": {
+                  "type": "integer"
+                },
+                "visitors": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "clicks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "target",
+                "text",
+                "href",
+                "count",
+                "visitors"
+              ],
+              "properties": {
+                "target": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "text": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "href": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "count": {
+                  "type": "integer"
+                },
+                "visitors": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "goals": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "path",
+                "event",
+                "visits",
+                "rate"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "event": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "visits": {
+                  "type": "integer"
+                },
+                "rate": {
+                  "type": "number"
+                }
+              }
+            }
+          }
+        }
+      },
+      "Visit": {
+        "type": "object",
+        "required": [
+          "id",
+          "site",
+          "visitor",
+          "user",
+          "startedAt",
+          "lastAt",
+          "duration",
+          "pageviews",
+          "events",
+          "entry",
+          "exit",
+          "source",
+          "referrer",
+          "utm",
+          "browser",
+          "os",
+          "device"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "site": {
+            "type": "string"
+          },
+          "visitor": {
+            "type": "string"
+          },
+          "user": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lastAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "duration": {
+            "type": "integer",
+            "description": "Seconds."
+          },
+          "pageviews": {
+            "type": "integer"
+          },
+          "events": {
+            "type": "integer"
+          },
+          "entry": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "exit": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "referrer": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "utm": {
+            "type": "object",
+            "required": [
+              "source",
+              "medium",
+              "campaign"
+            ],
+            "properties": {
+              "source": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "medium": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "campaign": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          "browser": {
+            "type": "string"
+          },
+          "os": {
+            "type": "string"
+          },
+          "device": {
+            "type": "string"
+          }
+        }
+      },
+      "VisitList": {
+        "type": "object",
+        "required": [
+          "visits"
+        ],
+        "properties": {
+          "visits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Visit"
+            }
+          },
+          "nextCursor": {
+            "type": "string"
+          }
+        }
+      },
+      "VisitEvent": {
+        "type": "object",
+        "required": [
+          "type",
+          "at",
+          "path",
+          "query",
+          "title",
+          "target",
+          "text",
+          "href",
+          "name",
+          "props",
+          "duration",
+          "scroll"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "pageview",
+              "leave",
+              "click",
+              "event"
+            ]
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "query": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "href": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "props": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "duration": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "scroll": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        }
+      },
+      "VisitDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Visit"
+          },
+          {
+            "type": "object",
+            "required": [
+              "timeline"
+            ],
+            "properties": {
+              "timeline": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/VisitEvent"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "VisitorExport": {
+        "type": "object",
+        "required": [
+          "site",
+          "visitor",
+          "exportedAt",
+          "visits"
+        ],
+        "properties": {
+          "site": {
+            "type": "string"
+          },
+          "visitor": {
+            "type": "string"
+          },
+          "exportedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "visits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VisitDetail"
+            }
+          }
+        }
+      }
+    }
+  }
+}

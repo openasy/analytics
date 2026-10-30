@@ -1,0 +1,13 @@
+# The sites Analytics measures. This file is the only place sites are added, changed and removed; a change is
+# picked up within a minute, and a file with a mistake leaves the last good one in place.
+sites:
+  - name: shop
+    domains: [https://www.example.com, https://example.com]
+    # consent: required   # nothing is sent or stored until the page calls openasy.consent(true)
+    query: [q] # query parameters kept besides utm_*
+    ignore: [/admin/*] # paths that are not recorded
+    keep: { events: 90d, days: 730d }
+    goals:
+      - { name: Bought, path: /checkout/done }
+      - { name: Signed up, event: signup }
+    # serverKey: ANALYTICS_SHOP_KEY   # the variable that holds the key for events from your servers
