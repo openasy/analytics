@@ -1,3 +1,4 @@
+import { gzipSync } from "node:zlib";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -103,6 +104,10 @@ describe("responses match openapi.json", () => {
       { type: "click", url: `${SHOP}/`, target: "a.buy", text: "Buy", href: `${SHOP}/cart` },
       { type: "event", url: `${SHOP}/`, name: "signup", props: { plan: "pro" } },
       { type: "leave", url: `${SHOP}/`, duration: 1000, scroll: 50 },
+      { type: "click", url: `${SHOP}/`, target: "a.buy", text: "Buy", x: 400, y: 600 },
+      { type: "form", url: `${SHOP}/`, form: "form#signup", action: "start", field: "email", kind: "email" },
+      { type: "form", url: `${SHOP}/`, form: "form#signup", action: "leave", field: "email", kind: "email", duration: 900, filled: true, again: false },
+      { type: "form", url: `${SHOP}/`, form: "form#signup", action: "submit" },
     ],
   };
 
@@ -129,8 +134,8 @@ describe("responses match openapi.json", () => {
     await call("POST", "/api/v1/collect", page("{nope"));
     await call("POST", "/api/v1/collect", page({ ...batch, events: [{ type: "pageview" }] }));
     await call("POST", "/api/v1/collect", page({ ...batch, pad: "x".repeat(70_000) }));
-    // shop takes 200 events a minute, and 6 are counted so far (refused batches are not); this fills the rest of it.
-    for (const [i, size] of [50, 50, 50, 44].entries()) {
+    // shop takes 200 events a minute, and 10 are counted so far (a batch refused before its events are read is not); this fills the rest of it.
+    for (const [i, size] of [50, 50, 50, 40].entries()) {
       const events = Array.from({ length: size }, () => batch.events[0]);
       const res = await fetch(`${base}/api/v1/collect`, { method: "POST", ...page({ ...batch, session: `session-fill-${i}`, events }) });
       expect(res.status).toBe(202);
@@ -157,6 +162,49 @@ describe("responses match openapi.json", () => {
     await call("GET", "/api/v1/visits/{id}", admin(), "/api/v1/visits/missing?site=shop");
     await call("GET", "/api/v1/visits/{id}", admin(), `/api/v1/visits/${session}`);
     await call("GET", "/api/v1/visits/{id}", {}, `/api/v1/visits/${session}?site=shop`);
+  });
+
+  it("funnels, forms, heatmaps and replays", async () => {
+    for (const [path, ok] of [
+      ["/api/v1/funnels", "/api/v1/funnels?site=shop&days=7"],
+      ["/api/v1/forms", "/api/v1/forms?site=shop&days=7"],
+      ["/api/v1/heatmap", "/api/v1/heatmap?site=shop&path=/&days=7&device=desktop"],
+      ["/api/v1/replays", "/api/v1/replays?site=shop&days=7&limit=1"],
+    ] as const) {
+      await call("GET", path, admin(), ok);
+      await call("GET", path, admin(), `${path}?site=nope`);
+      await call("GET", path, admin(), `${path}?site=shop&days=2`);
+      await call("GET", path, {}, ok);
+    }
+    const chunk = (q: string, body: Uint8Array | string = gzipSync(JSON.stringify([{ type: 4, timestamp: Date.now(), data: {} }])), origin = SHOP) => ({
+      method: "POST",
+      body,
+      headers: { "content-type": "text/plain", origin, "user-agent": "Mozilla/5.0 (Macintosh) Chrome/141.0 Safari/537.36" },
+      q,
+    });
+    const send = (c: ReturnType<typeof chunk>) => call("POST", "/api/v1/replay", c, `/api/v1/replay?${c.q}`);
+    await send(chunk(`site=shop&visitor=${visitor}&session=${session}&seq=0`));
+    await send(
+      chunk(
+        `site=shop&visitor=${visitor}&session=${session}&seq=1`,
+        gzipSync(JSON.stringify([{ type: 4, timestamp: Date.now(), data: {} }])),
+        "https://evil.example",
+      ),
+    );
+    await send(chunk(`site=nope&visitor=${visitor}&session=${session}&seq=1`));
+    await send(chunk(`site=shop&visitor=${visitor}&session=${session}&seq=x`));
+    await send(chunk(`site=shop&visitor=${visitor}&session=${session}&seq=1`, "not gzip"));
+    await send(chunk(`site=shop&visitor=${visitor}&session=${session}&seq=1`, new Uint8Array(2 * 1024 * 1024 + 10)));
+    await call(
+      "POST",
+      "/api/v1/replay",
+      { method: "POST", body: "x", headers: { "content-encoding": "br", origin: SHOP } },
+      `/api/v1/replay?site=shop&visitor=${visitor}&session=${session}&seq=1`,
+    );
+    await call("GET", "/api/v1/replays/{id}", admin(), `/api/v1/replays/${session}?site=shop`);
+    await call("GET", "/api/v1/replays/{id}", admin(), "/api/v1/replays/missing?site=shop");
+    await call("GET", "/api/v1/replays/{id}", admin(), `/api/v1/replays/${session}`);
+    await call("GET", "/api/v1/replays/{id}", {}, `/api/v1/replays/${session}?site=shop`);
   });
 
   it("a visitor's data", async () => {

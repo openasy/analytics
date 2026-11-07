@@ -12,7 +12,7 @@
   "scripts": {
     "dev": "vite --config web/vite.config.ts",
     "start": "node server/main.ts",
-    "build": "vite build --config tracker/vite.config.ts && vite build --config web/vite.config.ts && node scripts/build-docs.ts",
+    "build": "vite build --config tracker/vite.config.ts && vite build --config tracker/vite.config.ts --mode replay && vite build --config tracker/vite.config.ts --mode heatmap && vite build --config web/vite.config.ts && node scripts/build-docs.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p web && tsc --noEmit -p tracker",
     "lint": "oxlint",
     "format": "prettier --write .",
@@ -23,6 +23,8 @@
   "devDependencies": {
     "@openasy/code-style": "https://github.com/openasy/code-style/releases/download/v0.1.2/openasy-code-style-0.1.2.tgz",
     "@openasy/ui": "https://github.com/openasy/ui/releases/download/v0.14.0/openasy-ui-0.14.0.tgz",
+    "@rrweb/record": "2.1.7",
+    "@rrweb/replay": "2.1.7",
     "@types/node": "^26.6.5",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",

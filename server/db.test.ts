@@ -12,7 +12,7 @@ describe("openDb", () => {
     expect(first.prepare("PRAGMA journal_mode").get()).toEqual({ journal_mode: "wal" });
     first.close();
     const second = openDb(path);
-    expect(second.prepare("SELECT COUNT(*) AS n FROM schema_migrations").get()).toEqual({ n: 1 });
+    expect(second.prepare("SELECT COUNT(*) AS n FROM schema_migrations").get()).toEqual({ n: 2 });
     second.close();
   });
 });

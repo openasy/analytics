@@ -110,7 +110,7 @@
           "Collect"
         ],
         "summary": "The site's script",
-        "description": "The script tag of a site: `<script defer src=\".../s/shop.js\"></script>`. It carries the site's settings from the file and may be cached for five minutes.",
+        "description": "The script tag of a site: `<script defer src=\".../s/shop.js\"></script>`. It carries the site's settings from the file and may be cached for five minutes. /s/replay.js is the replay recorder and /s/heatmap.js the heatmap overlay; the site's script loads them when they are needed.",
         "security": [],
         "parameters": [
           {
@@ -302,16 +302,16 @@
               }
             }
           },
-          "404": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "422": {
-            "$ref": "#/components/responses/Problem"
-          },
           "401": {
             "$ref": "#/components/responses/Problem"
           },
           "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
             "$ref": "#/components/responses/Problem"
           },
           "503": {
@@ -403,16 +403,16 @@
               }
             }
           },
-          "404": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "422": {
-            "$ref": "#/components/responses/Problem"
-          },
           "401": {
             "$ref": "#/components/responses/Problem"
           },
           "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
             "$ref": "#/components/responses/Problem"
           },
           "503": {
@@ -473,16 +473,16 @@
               }
             }
           },
-          "404": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "422": {
-            "$ref": "#/components/responses/Problem"
-          },
           "401": {
             "$ref": "#/components/responses/Problem"
           },
           "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
             "$ref": "#/components/responses/Problem"
           },
           "503": {
@@ -543,16 +543,16 @@
               }
             }
           },
-          "404": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "422": {
-            "$ref": "#/components/responses/Problem"
-          },
           "401": {
             "$ref": "#/components/responses/Problem"
           },
           "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
             "$ref": "#/components/responses/Problem"
           },
           "503": {
@@ -604,16 +604,16 @@
           "204": {
             "description": "Deleted. Daily totals, which name nobody, stay."
           },
-          "404": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "422": {
-            "$ref": "#/components/responses/Problem"
-          },
           "401": {
             "$ref": "#/components/responses/Problem"
           },
           "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
             "$ref": "#/components/responses/Problem"
           },
           "503": {
@@ -761,6 +761,539 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/v1/funnels": {
+      "get": {
+        "operationId": "getFunnels",
+        "tags": [
+          "Reports"
+        ],
+        "summary": "Funnels",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Each funnel of the sites file: the visits that reached each step having done the steps before in order, the median time between steps, and conversion by source. Needs the viewer role.",
+        "parameters": [
+          {
+            "name": "site",
+            "in": "query",
+            "required": true,
+            "description": "The site, by its name in the sites file.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "description": "Today (1) or the last 7, 30 or 90 days.",
+            "schema": {
+              "type": "integer",
+              "enum": [
+                1,
+                7,
+                30,
+                90
+              ],
+              "default": 7
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Funnels",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Funnels"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      }
+    },
+    "/api/v1/forms": {
+      "get": {
+        "operationId": "getForms",
+        "tags": [
+          "Reports"
+        ],
+        "summary": "Forms",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Forms on the site's pages: starts, sends, the time between, and each field's reach, where people left and how long they spent. Names and kinds of fields only. Needs the viewer role.",
+        "parameters": [
+          {
+            "name": "site",
+            "in": "query",
+            "required": true,
+            "description": "The site, by its name in the sites file.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "description": "Today (1) or the last 7, 30 or 90 days.",
+            "schema": {
+              "type": "integer",
+              "enum": [
+                1,
+                7,
+                30,
+                90
+              ],
+              "default": 7
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Forms",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Forms"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      }
+    },
+    "/api/v1/heatmap": {
+      "get": {
+        "operationId": "getHeatmap",
+        "tags": [
+          "Reports"
+        ],
+        "summary": "A page's heatmap",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Clicks on one page by element and where in it, and how far it was read, for the overlay the site's script draws on the page. Needs the viewer role.",
+        "parameters": [
+          {
+            "name": "site",
+            "in": "query",
+            "required": true,
+            "description": "The site, by its name in the sites file.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "description": "Today (1) or the last 7, 30 or 90 days.",
+            "schema": {
+              "type": "integer",
+              "enum": [
+                1,
+                7,
+                30,
+                90
+              ],
+              "default": 7
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "description": "The page's path, such as /pricing.",
+            "schema": {
+              "type": "string",
+              "default": "/",
+              "maxLength": 512
+            }
+          },
+          {
+            "name": "device",
+            "in": "query",
+            "required": false,
+            "description": "Only visits from this kind of device.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "desktop",
+                "mobile",
+                "tablet"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page's heatmap",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Heatmap"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      }
+    },
+    "/api/v1/replays": {
+      "get": {
+        "operationId": "listReplays",
+        "tags": [
+          "Reports"
+        ],
+        "summary": "Visits with a replay",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Visits with a replay, newest first. Needs the viewer role.",
+        "parameters": [
+          {
+            "name": "site",
+            "in": "query",
+            "required": true,
+            "description": "The site, by its name in the sites file.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "description": "Today (1) or the last 7, 30 or 90 days.",
+            "schema": {
+              "type": "integer",
+              "enum": [
+                1,
+                7,
+                30,
+                90
+              ],
+              "default": 7
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 100
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "The previous page's nextCursor.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Visits with a replay",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      }
+    },
+    "/api/v1/replays/{id}": {
+      "get": {
+        "operationId": "getReplay",
+        "tags": [
+          "Reports"
+        ],
+        "summary": "A visit's replay",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "The visit and its rrweb events in order, for the player. Needs the viewer role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "site",
+            "in": "query",
+            "required": true,
+            "description": "The site, by its name in the sites file.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The visit and its replay.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Replay"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      }
+    },
+    "/api/v1/replay": {
+      "post": {
+        "operationId": "collectReplay",
+        "tags": [
+          "Collect"
+        ],
+        "summary": "Send a chunk of a visit's replay",
+        "description": "What replay.js sends: a gzipped JSON array of rrweb events as the body, as text/plain so the page needs no preflight, with the visit's ids in the query. Taken only from the site's domains, for sites with replays in the sites file. Emails, tokens and keys in it are masked before it is kept. Up to 2 MiB gzipped, 24 MiB unpacked, and 32 MiB a visit.",
+        "security": [
+          {}
+        ],
+        "parameters": [
+          {
+            "name": "site",
+            "in": "query",
+            "required": true,
+            "description": "The site, by its name in the sites file.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "visitor",
+            "in": "query",
+            "required": true,
+            "description": "The visit's visitor id, from openasy.ids().",
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{8,64}$"
+            }
+          },
+          {
+            "name": "session",
+            "in": "query",
+            "required": true,
+            "description": "The visit's session id, from openasy.ids().",
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{8,64}$"
+            }
+          },
+          {
+            "name": "seq",
+            "in": "query",
+            "required": true,
+            "description": "The chunk's number in the visit, from 0.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "text/plain": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Taken, or dropped when the visit's replay is full or another visitor's.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "accepted"
+                  ],
+                  "properties": {
+                    "accepted": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "413": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "429": {
+            "$ref": "#/components/responses/Problem"
           }
         }
       }
@@ -928,9 +1461,10 @@
               "leave",
               "click",
               "event",
+              "form",
               "forget"
             ],
-            "description": "forget deletes everything kept about the visitor: the page withdrew consent."
+            "description": "form: a form field was entered first (start), left, or the form was sent (submit) or given up (abandon); its value is never part of it. forget deletes everything kept about the visitor: the page withdrew consent."
           },
           "at": {
             "type": "number",
@@ -951,7 +1485,7 @@
           },
           "target": {
             "type": "string",
-            "description": "click: a short selector of the element."
+            "description": "click: a selector that finds the element again, for the heatmap."
           },
           "text": {
             "type": "string",
@@ -981,13 +1515,57 @@
           "duration": {
             "type": "number",
             "minimum": 0,
-            "description": "leave: milliseconds on the page."
+            "description": "leave: milliseconds on the page. form: milliseconds in the field."
           },
           "scroll": {
             "type": "number",
             "minimum": 0,
             "maximum": 100,
             "description": "leave: how far down the page was read, in percent."
+          },
+          "x": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1000,
+            "description": "click: where in the element, in thousandths of its width."
+          },
+          "y": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1000,
+            "description": "click: where in the element, in thousandths of its height."
+          },
+          "form": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "form: the form's selector, such as form#signup."
+          },
+          "field": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.:[\\]()-]{1,64}$",
+            "description": "form: the field's name or id. One named like a card number or a password is kept as its kind, such as (password)."
+          },
+          "kind": {
+            "type": "string",
+            "description": "form: the field's kind: text, email, password, tel, number, url, search, date, select, textarea, checkbox, radio, file or other."
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "start",
+              "leave",
+              "submit",
+              "abandon"
+            ],
+            "description": "form: what happened."
+          },
+          "filled": {
+            "type": "boolean",
+            "description": "form leave: whether the field had anything in it, never what."
+          },
+          "again": {
+            "type": "boolean",
+            "description": "form leave: whether the field was entered before in this form."
           }
         }
       },
@@ -1126,7 +1704,10 @@
           "rateLimit",
           "serverKey",
           "today",
-          "lastEventAt"
+          "lastEventAt",
+          "funnels",
+          "forms",
+          "replays"
         ],
         "properties": {
           "name": {
@@ -1225,6 +1806,51 @@
               "null"
             ],
             "format": "date-time"
+          },
+          "funnels": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "steps"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "steps": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/FunnelStep"
+                  }
+                }
+              }
+            }
+          },
+          "forms": {
+            "type": "boolean",
+            "description": "Whether the script reports form fields entered and left."
+          },
+          "replays": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "required": [
+              "sample",
+              "keep"
+            ],
+            "properties": {
+              "sample": {
+                "type": "number",
+                "description": "Percent of visits recorded."
+              },
+              "keep": {
+                "type": "integer",
+                "description": "Days a replay is kept."
+              }
+            }
           }
         }
       },
@@ -1718,7 +2344,9 @@
           "utm",
           "browser",
           "os",
-          "device"
+          "device",
+          "replay",
+          "rage"
         ],
         "properties": {
           "id": {
@@ -1814,6 +2442,14 @@
           },
           "device": {
             "type": "string"
+          },
+          "replay": {
+            "type": "boolean",
+            "description": "Whether the visit has a replay."
+          },
+          "rage": {
+            "type": "integer",
+            "description": "Rage clicks: three clicks or more on the same element within a second."
           }
         }
       },
@@ -1848,7 +2484,15 @@
           "name",
           "props",
           "duration",
-          "scroll"
+          "scroll",
+          "x",
+          "y",
+          "form",
+          "field",
+          "kind",
+          "action",
+          "filled",
+          "again"
         ],
         "properties": {
           "type": {
@@ -1857,7 +2501,8 @@
               "pageview",
               "leave",
               "click",
-              "event"
+              "event",
+              "form"
             ]
           },
           "at": {
@@ -1923,6 +2568,61 @@
               "integer",
               "null"
             ]
+          },
+          "x": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "y": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "form": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "field": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "action": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "start",
+              "leave",
+              "submit",
+              "abandon",
+              null
+            ]
+          },
+          "filled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "again": {
+            "type": [
+              "boolean",
+              "null"
+            ]
           }
         }
       },
@@ -1969,7 +2669,461 @@
           "visits": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/VisitDetail"
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/VisitDetail"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "recording"
+                  ],
+                  "properties": {
+                    "recording": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      },
+                      "description": "The visit's replay as rrweb events; empty without one."
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "FunnelStep": {
+        "type": "object",
+        "required": [
+          "name",
+          "path",
+          "event"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "event": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Funnels": {
+        "type": "object",
+        "required": [
+          "site",
+          "days",
+          "from",
+          "funnels"
+        ],
+        "properties": {
+          "site": {
+            "type": "string"
+          },
+          "days": {
+            "type": "integer",
+            "enum": [
+              1,
+              7,
+              30,
+              90
+            ]
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "funnels": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "steps",
+                "sources"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "steps": {
+                  "type": "array",
+                  "items": {
+                    "allOf": [
+                      {
+                        "$ref": "#/components/schemas/FunnelStep"
+                      },
+                      {
+                        "type": "object",
+                        "required": [
+                          "visits",
+                          "median"
+                        ],
+                        "properties": {
+                          "visits": {
+                            "type": "integer",
+                            "description": "Visits that reached the step, having done every step before it in order."
+                          },
+                          "median": {
+                            "type": [
+                              "number",
+                              "null"
+                            ],
+                            "description": "Median seconds from the step before; null for the first."
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                "sources": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "source",
+                      "entered",
+                      "finished"
+                    ],
+                    "properties": {
+                      "source": {
+                        "type": "string"
+                      },
+                      "entered": {
+                        "type": "integer"
+                      },
+                      "finished": {
+                        "type": "integer"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "Forms": {
+        "type": "object",
+        "required": [
+          "site",
+          "days",
+          "from",
+          "enabled",
+          "forms"
+        ],
+        "properties": {
+          "site": {
+            "type": "string"
+          },
+          "days": {
+            "type": "integer",
+            "enum": [
+              1,
+              7,
+              30,
+              90
+            ]
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether the site has forms: true in the sites file."
+          },
+          "forms": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "form",
+                "page",
+                "starts",
+                "submits",
+                "median",
+                "fields"
+              ],
+              "properties": {
+                "form": {
+                  "type": "string"
+                },
+                "page": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "starts": {
+                  "type": "integer",
+                  "description": "Visits that entered a field of it."
+                },
+                "submits": {
+                  "type": "integer",
+                  "description": "Visits that sent it."
+                },
+                "median": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "description": "Median seconds from the first field to sending it."
+                },
+                "fields": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "field",
+                      "kind",
+                      "reached",
+                      "left",
+                      "time",
+                      "again"
+                    ],
+                    "properties": {
+                      "field": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "reached": {
+                        "type": "integer"
+                      },
+                      "left": {
+                        "type": "integer",
+                        "description": "Visits that gave the form up at this field."
+                      },
+                      "time": {
+                        "type": [
+                          "number",
+                          "null"
+                        ],
+                        "description": "Median seconds in it."
+                      },
+                      "again": {
+                        "type": "number",
+                        "description": "Share of the visits that reached it and came back to it."
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "Heatmap": {
+        "type": "object",
+        "required": [
+          "site",
+          "days",
+          "from",
+          "path",
+          "device",
+          "url",
+          "views",
+          "clicks",
+          "elements",
+          "points",
+          "scroll",
+          "pages"
+        ],
+        "properties": {
+          "site": {
+            "type": "string"
+          },
+          "days": {
+            "type": "integer",
+            "enum": [
+              1,
+              7,
+              30,
+              90
+            ]
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "path": {
+            "type": "string"
+          },
+          "device": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "desktop",
+              "mobile",
+              "tablet",
+              null
+            ]
+          },
+          "url": {
+            "type": "string",
+            "description": "The page on the site's first domain, for the frame."
+          },
+          "views": {
+            "type": "integer"
+          },
+          "clicks": {
+            "type": "integer"
+          },
+          "elements": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "target",
+                "text",
+                "count",
+                "visitors"
+              ],
+              "properties": {
+                "target": {
+                  "type": "string"
+                },
+                "text": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "count": {
+                  "type": "integer"
+                },
+                "visitors": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "points": {
+            "type": "array",
+            "description": "Clicks by element and by cell of a 20 by 20 grid over it, x and y at the cell's centre in thousandths.",
+            "items": {
+              "type": "object",
+              "required": [
+                "target",
+                "x",
+                "y",
+                "count"
+              ],
+              "properties": {
+                "target": {
+                  "type": "string"
+                },
+                "x": {
+                  "type": "integer"
+                },
+                "y": {
+                  "type": "integer"
+                },
+                "count": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "scroll": {
+            "type": "array",
+            "description": "The share of views read to each tenth of the page.",
+            "items": {
+              "type": "object",
+              "required": [
+                "depth",
+                "share"
+              ],
+              "properties": {
+                "depth": {
+                  "type": "integer"
+                },
+                "share": {
+                  "type": "number"
+                }
+              }
+            }
+          },
+          "pages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "path",
+                "views"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "views": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        }
+      },
+      "ReplayList": {
+        "type": "object",
+        "required": [
+          "replays"
+        ],
+        "properties": {
+          "replays": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Visit"
+            }
+          },
+          "nextCursor": {
+            "type": "string"
+          }
+        }
+      },
+      "Replay": {
+        "type": "object",
+        "required": [
+          "visit",
+          "events"
+        ],
+        "properties": {
+          "visit": {
+            "$ref": "#/components/schemas/Visit"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "type",
+                "timestamp"
+              ],
+              "properties": {
+                "type": {
+                  "type": "integer"
+                },
+                "timestamp": {
+                  "type": "number"
+                }
+              }
             }
           }
         }

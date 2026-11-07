@@ -64,6 +64,57 @@ const MIGRATIONS = [
      pageviews INTEGER NOT NULL DEFAULT 0,
      PRIMARY KEY (site, day)
    )`,
+  // Form fields entered and left (their names and kinds, never their values), where in an element a click landed, and
+  // session replays. SQLite cannot change a CHECK, so events is made again with the form type.
+  `CREATE TABLE events_v2 (
+     id INTEGER PRIMARY KEY,
+     site TEXT NOT NULL,
+     session TEXT NOT NULL,
+     visitor TEXT NOT NULL,
+     at TEXT NOT NULL,
+     type TEXT NOT NULL CHECK (type IN ('pageview', 'leave', 'click', 'event', 'form')),
+     path TEXT,
+     query TEXT,
+     title TEXT,
+     target TEXT,
+     text TEXT,
+     href TEXT,
+     name TEXT,
+     props TEXT,
+     duration INTEGER,
+     scroll INTEGER,
+     x INTEGER,
+     y INTEGER,
+     form TEXT,
+     field TEXT,
+     kind TEXT,
+     action TEXT CHECK (action IN ('start', 'leave', 'submit', 'abandon')),
+     filled INTEGER,
+     again INTEGER
+   );
+   INSERT INTO events_v2 (id, site, session, visitor, at, type, path, query, title, target, text, href, name, props, duration, scroll)
+     SELECT id, site, session, visitor, at, type, path, query, title, target, text, href, name, props, duration, scroll FROM events;
+   DROP TABLE events;
+   ALTER TABLE events_v2 RENAME TO events;
+   CREATE INDEX events_at ON events (site, at);
+   CREATE INDEX events_session ON events (site, session, at);
+   CREATE INDEX events_visitor ON events (site, visitor);
+   CREATE INDEX events_forms ON events (site, form, at) WHERE type = 'form';
+   -- A replay is the visit's rrweb events in the order they came, gzipped as the page sent them.
+   CREATE TABLE replay_chunks (
+     site TEXT NOT NULL,
+     session TEXT NOT NULL,
+     visitor TEXT NOT NULL,
+     seq INTEGER NOT NULL,
+     at TEXT NOT NULL,
+     size INTEGER NOT NULL,
+     data BLOB NOT NULL,
+     PRIMARY KEY (site, session, seq)
+   );
+   CREATE INDEX replay_chunks_at ON replay_chunks (site, at);
+   CREATE INDEX replay_chunks_visitor ON replay_chunks (site, visitor);
+   ALTER TABLE sessions ADD COLUMN replay INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE sessions ADD COLUMN rage INTEGER NOT NULL DEFAULT 0;`,
 ];
 
 /** Opens the product's single SQLite file in WAL mode (ADR 0011) and migrates it forward. */

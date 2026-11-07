@@ -1,7 +1,8 @@
 import { timingSafeEqual } from "node:crypto";
+import { gunzipSync, gzipSync } from "node:zlib";
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
-import type { ConfigFileState, Site } from "./config.ts";
-import { agentOf, ignored, isBot, parseBatch, sourceOf, VisitError, type Batch } from "./visit.ts";
+import { pathPattern, type ConfigFileState, type Site } from "./config.ts";
+import { agentOf, ignored, isBot, mask, parseBatch, sourceOf, VisitError, type Batch } from "./visit.ts";
 
 export type ProblemCode =
   | "invalid-token"
@@ -85,6 +86,33 @@ export interface AnalyticsOptions {
   clock?: () => number;
 }
 
+/** The median of a list of numbers, or null when it is empty. */
+export function median(values: number[]): number | null {
+  if (!values.length) return null;
+  const v = [...values].sort((a, b) => a - b);
+  const mid = v.length >> 1;
+  return v.length % 2 ? v[mid]! : (v[mid - 1]! + v[mid]!) / 2;
+}
+
+/** A replay chunk is at most this large as the page sends it, gzipped, and the replay of one visit at most REPLAY_MAX. */
+export const CHUNK_LIMIT = 2 * 1024 * 1024;
+const CHUNK_RAW_LIMIT = 24 * 1024 * 1024;
+const REPLAY_MAX = 32 * 1024 * 1024;
+/** Three clicks on the same element within a second are a rage click: someone expected something to happen. */
+const RAGE_CLICKS = 3;
+const RAGE_MS = 1000;
+
+export interface ReplayChunk {
+  site: string;
+  visitor: string;
+  session: string;
+  seq: number;
+  /** The rrweb events of this chunk as a gzipped JSON array, as the page sent them. */
+  data: Buffer;
+  origin?: string;
+  userAgent?: string;
+}
+
 export interface Ingest {
   body: unknown;
   /** The Origin header of a request from a page. */
@@ -147,6 +175,8 @@ export function createAnalytics(db: DatabaseSync, { defaultRate = 6000, env = pr
       browser: s.browser as string,
       os: s.os as string,
       device: s.device as string,
+      replay: s.replay === 1,
+      rage: (s.rage as number) ?? 0,
     };
   }
 
@@ -164,6 +194,14 @@ export function createAnalytics(db: DatabaseSync, { defaultRate = 6000, env = pr
       props: e.props ? (JSON.parse(e.props) as Record<string, string | number | boolean>) : null,
       duration: (e.duration as number | null) ?? null,
       scroll: (e.scroll as number | null) ?? null,
+      x: (e.x as number | null) ?? null,
+      y: (e.y as number | null) ?? null,
+      form: (e.form as string | null) ?? null,
+      field: (e.field as string | null) ?? null,
+      kind: (e.kind as string | null) ?? null,
+      action: (e.action as string | null) ?? null,
+      filled: e.filled == null ? null : e.filled === 1,
+      again: e.again == null ? null : e.again === 1,
     };
   }
 
@@ -172,6 +210,7 @@ export function createAnalytics(db: DatabaseSync, { defaultRate = 6000, env = pr
     const n = db.prepare("DELETE FROM sessions WHERE site = ? AND visitor = ?").run(site, visitor).changes;
     db.prepare("DELETE FROM events WHERE site = ? AND visitor = ?").run(site, visitor);
     db.prepare("DELETE FROM visitor_days WHERE site = ? AND visitor = ?").run(site, visitor);
+    db.prepare("DELETE FROM replay_chunks WHERE site = ? AND visitor = ?").run(site, visitor);
     return Number(n);
   }
 
@@ -242,8 +281,16 @@ export function createAnalytics(db: DatabaseSync, { defaultRate = 6000, env = pr
             site.name,
             day,
           );
+        if (e.type === "click" && e.target) {
+          const recent = db
+            .prepare("SELECT COUNT(*) AS n FROM events WHERE site = ? AND session = ? AND type = 'click' AND target = ? AND at >= ? AND at <= ?")
+            .get(site.name, batch.session, e.target, new Date(Date.parse(e.at) - RAGE_MS).toISOString(), e.at) as { n: number };
+          // Counted once per burst: when the third quick click arrives.
+          if (recent.n === RAGE_CLICKS - 1) db.prepare("UPDATE sessions SET rage = rage + 1 WHERE site = ? AND id = ?").run(site.name, batch.session);
+        }
         db.prepare(
-          "INSERT INTO events (site, session, visitor, at, type, path, query, title, target, text, href, name, props, duration, scroll) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          `INSERT INTO events (site, session, visitor, at, type, path, query, title, target, text, href, name, props, duration, scroll, x, y, form, field, kind, action, filled, again)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           site.name,
           batch.session,
@@ -260,6 +307,14 @@ export function createAnalytics(db: DatabaseSync, { defaultRate = 6000, env = pr
           e.props ? JSON.stringify(e.props) : null,
           e.duration,
           e.scroll,
+          e.x,
+          e.y,
+          e.form,
+          e.field,
+          e.kind,
+          e.action,
+          e.filled === null ? null : e.filled ? 1 : 0,
+          e.again === null ? null : e.again ? 1 : 0,
         );
         accepted++;
       }
@@ -431,6 +486,284 @@ export function createAnalytics(db: DatabaseSync, { defaultRate = 6000, env = pr
       };
     },
 
+    /**
+     * Each funnel of the file over a period: how many visits reached each step, having done every step before it in
+     * order, the median time from the step before, and the first to last step's conversion by source.
+     */
+    funnels(name: string, range: Range) {
+      const site = siteOf(name);
+      const { from } = period(range);
+      const funnels = site.funnels.map((f) => ({
+        f,
+        match: f.steps.map((st) => (st.path ? { type: "pageview", re: pathPattern(st.path) } : { type: "event", name: st.event! })),
+        reached: f.steps.map(() => 0),
+        waits: f.steps.map(() => [] as number[]),
+        sources: new Map<string, { entered: number; finished: number }>(),
+      }));
+      if (!funnels.length) return { site: site.name, days: range, from, funnels: [] };
+      const sources = new Map(
+        all<Row>("SELECT id, source FROM sessions WHERE site = ? AND started_at >= ?", site.name, from).map((r) => [r.id as string, r.source ?? null]),
+      );
+      // One pass over the visits' page views and events, in order: each funnel moves a pointer along its steps.
+      let current = "";
+      let state = funnels.map(() => ({ step: 0, at: 0 }));
+      const close = () => {
+        if (!current) return;
+        funnels.forEach((x, i) => {
+          const done = state[i]!.step;
+          if (!done) return;
+          const src = (sources.get(current) as string | null | undefined) ?? "Direct";
+          const b = x.sources.get(src) ?? { entered: 0, finished: 0 };
+          b.entered++;
+          if (done === x.f.steps.length) b.finished++;
+          x.sources.set(src, b);
+        });
+      };
+      const rows = db
+        .prepare("SELECT session, at, type, path, name FROM events WHERE site = ? AND at >= ? AND type IN ('pageview', 'event') ORDER BY session, at, id")
+        .iterate(site.name, from) as Iterable<Row>;
+      for (const e of rows) {
+        if (e.session !== current) {
+          close();
+          current = e.session as string;
+          state = funnels.map(() => ({ step: 0, at: 0 }));
+        }
+        const t = Date.parse(e.at as string);
+        funnels.forEach((x, i) => {
+          const st = state[i]!;
+          if (st.step === x.f.steps.length) return;
+          const m = x.match[st.step]!;
+          const hit = m.type === e.type && ("re" in m ? m.re!.test(e.path as string) : m.name === e.name);
+          if (!hit) return;
+          if (st.step > 0) x.waits[st.step]!.push((t - st.at) / 1000);
+          x.reached[st.step]!++;
+          st.step++;
+          st.at = t;
+        });
+      }
+      close();
+      return {
+        site: site.name,
+        days: range,
+        from,
+        funnels: funnels.map((x) => ({
+          name: x.f.name,
+          steps: x.f.steps.map((st, i) => ({ ...st, visits: x.reached[i]!, median: i ? median(x.waits[i]!) : null })),
+          sources: [...x.sources]
+            .map(([source, b]) => ({ source, ...b }))
+            .sort((a, b) => b.entered - a.entered || a.source.localeCompare(b.source))
+            .slice(0, 10),
+        })),
+      };
+    },
+
+    /**
+     * Forms on a site's pages over a period: visits that started each (entered a field) and sent it, the median time
+     * between, and for each field how many reached it, left the form at it, the time in it and how often it was filled
+     * again. Field names and kinds only; values are never sent.
+     */
+    forms(name: string, range: Range) {
+      const site = siteOf(name);
+      const { from } = period(range);
+      const s = site.name;
+      const forms = all<Row>(
+        `SELECT form, COUNT(DISTINCT CASE WHEN action = 'start' THEN session END) AS starts,
+           COUNT(DISTINCT CASE WHEN action = 'submit' THEN session END) AS submits
+         FROM events WHERE site = ? AND at >= ? AND type = 'form' GROUP BY form ORDER BY starts DESC, form LIMIT 50`,
+        s,
+        from,
+      );
+      return {
+        site: s,
+        days: range,
+        from,
+        enabled: site.forms,
+        forms: forms.map((f) => {
+          const page = db
+            .prepare("SELECT path, COUNT(*) AS n FROM events WHERE site = ? AND at >= ? AND type = 'form' AND form = ? GROUP BY path ORDER BY n DESC LIMIT 1")
+            .get(s, from, f.form) as Row | undefined;
+          const times = all<Row>(
+            `SELECT (julianday(MIN(CASE WHEN action = 'submit' THEN at END)) - julianday(MIN(CASE WHEN action = 'start' THEN at END))) * 86400 AS t
+             FROM events WHERE site = ? AND at >= ? AND type = 'form' AND form = ? GROUP BY session`,
+            s,
+            from,
+            f.form,
+          )
+            .map((r) => r.t as number | null)
+            .filter((t): t is number => t !== null && t >= 0);
+          const fields = all<Row>(
+            `SELECT field, MAX(kind) AS kind, COUNT(DISTINCT session) AS reached,
+               COUNT(DISTINCT CASE WHEN again = 1 THEN session END) AS again
+             FROM events WHERE site = ? AND at >= ? AND type = 'form' AND form = ? AND action = 'leave' AND field IS NOT NULL
+             GROUP BY field ORDER BY reached DESC, MIN(at) LIMIT 50`,
+            s,
+            from,
+            f.form,
+          );
+          const left = new Map(
+            all<Row>(
+              `SELECT field, COUNT(DISTINCT session) AS n FROM events WHERE site = ? AND at >= ? AND type = 'form' AND form = ? AND action = 'abandon' GROUP BY field`,
+              s,
+              from,
+              f.form,
+            ).map((r) => [r.field as string, r.n as number]),
+          );
+          return {
+            form: f.form as string,
+            page: (page?.path as string | undefined) ?? null,
+            starts: f.starts as number,
+            submits: f.submits as number,
+            median: median(times),
+            fields: fields.map((x) => {
+              const durations = all<{ d: number }>(
+                "SELECT duration AS d FROM events WHERE site = ? AND at >= ? AND type = 'form' AND form = ? AND action = 'leave' AND field = ? AND duration IS NOT NULL",
+                s,
+                from,
+                f.form,
+                x.field,
+              ).map((r) => r.d / 1000);
+              return {
+                field: x.field as string,
+                kind: (x.kind as string | null) ?? null,
+                reached: x.reached as number,
+                left: left.get(x.field as string) ?? 0,
+                time: median(durations),
+                again: x.reached ? (x.again as number) / (x.reached as number) : 0,
+              };
+            }),
+          };
+        }),
+      };
+    },
+
+    /**
+     * Where people clicked on one page and how far they read it, for the heatmap the site's script draws on the page:
+     * clicks by element, each with where in it they landed on a 20 by 20 grid, and the share of views read to each
+     * tenth of the page.
+     */
+    heatmap(name: string, path: string, range: Range, device?: string) {
+      const site = siteOf(name);
+      const { from } = period(range);
+      const join = device ? "JOIN sessions s ON s.site = e.site AND s.id = e.session AND s.device = ?" : "";
+      const args: SQLInputValue[] = device ? [device, site.name, from, path] : [site.name, from, path];
+      const points = all<Row>(
+        `SELECT e.target, MIN(25 + (e.x / 50) * 50, 975) AS x, MIN(25 + (e.y / 50) * 50, 975) AS y, COUNT(*) AS count FROM events e ${join}
+         WHERE e.site = ? AND e.at >= ? AND e.type = 'click' AND e.path = ? AND e.target IS NOT NULL AND e.x IS NOT NULL AND e.y IS NOT NULL
+         GROUP BY e.target, e.x / 50, e.y / 50 ORDER BY count DESC LIMIT 5000`,
+        ...args,
+      ).map((r) => ({ target: r.target as string, x: r.x as number, y: r.y as number, count: r.count as number }));
+      const elements = all<Row>(
+        `SELECT e.target, MAX(e.text) AS text, COUNT(*) AS count, COUNT(DISTINCT e.visitor) AS visitors FROM events e ${join}
+         WHERE e.site = ? AND e.at >= ? AND e.type = 'click' AND e.path = ? AND e.target IS NOT NULL GROUP BY e.target ORDER BY count DESC LIMIT 100`,
+        ...args,
+      ).map((r) => ({ target: r.target as string, text: (r.text as string | null) ?? null, count: r.count as number, visitors: r.visitors as number }));
+      const depth = all<Row>(
+        `SELECT e.scroll FROM events e ${join} WHERE e.site = ? AND e.at >= ? AND e.type = 'leave' AND e.path = ? AND e.scroll IS NOT NULL`,
+        ...args,
+      ).map((r) => r.scroll as number);
+      const views = (
+        db.prepare(`SELECT COUNT(*) AS n FROM events e ${join} WHERE e.site = ? AND e.at >= ? AND e.type = 'pageview' AND e.path = ?`).get(...args) as {
+          n: number;
+        }
+      ).n;
+      const pages = all<Row>(
+        "SELECT path, COUNT(*) AS views FROM events WHERE site = ? AND at >= ? AND type = 'pageview' GROUP BY path ORDER BY views DESC, path LIMIT 50",
+        site.name,
+        from,
+      ).map((r) => ({ path: r.path as string, views: r.views as number }));
+      const origin = site.domains[0]!;
+      return {
+        site: site.name,
+        days: range,
+        from,
+        path,
+        device: device ?? null,
+        url: origin + path,
+        views,
+        clicks: elements.reduce((n, e) => n + e.count, 0),
+        elements,
+        points,
+        scroll: Array.from({ length: 10 }, (_, i) => ({
+          depth: (i + 1) * 10,
+          share: depth.length ? depth.filter((d) => d >= (i + 1) * 10 - 5).length / depth.length : 0,
+        })),
+        pages,
+      };
+    },
+
+    /** Takes a chunk of a visit's replay from the page; its text is masked before it is kept, as a batch's is. */
+    replay({ site: name, visitor, session, seq, data, origin, userAgent = "" }: ReplayChunk): { accepted: boolean } {
+      const site = siteOf(name);
+      if (!origin || !site.domains.includes(origin))
+        throw new AnalyticsError(403, "forbidden-origin", "Replays are taken only from the site's domains in the sites file.");
+      if (!site.replays) throw new AnalyticsError(403, "forbidden-origin", "This site does not record replays: set replays in the sites file.");
+      if (isBot(userAgent)) return { accepted: false };
+      limit(site, 1);
+      let text: string;
+      try {
+        text = gunzipSync(data, { maxOutputLength: CHUNK_RAW_LIMIT }).toString("utf8");
+      } catch {
+        throw new AnalyticsError(422, "invalid-batch", "A replay chunk is a gzipped JSON array of rrweb events, at most 24 MiB unpacked.");
+      }
+      let events: unknown;
+      try {
+        events = JSON.parse(text);
+      } catch {
+        events = null;
+      }
+      if (
+        !Array.isArray(events) ||
+        !events.length ||
+        events.some((e) => !e || typeof e !== "object" || typeof e.type !== "number" || typeof e.timestamp !== "number")
+      )
+        throw new AnalyticsError(422, "invalid-batch", "A replay chunk is a JSON array of rrweb events, each with a type and a timestamp.");
+      const used = db
+        .prepare("SELECT COALESCE(SUM(size), 0) AS n, MAX(visitor) AS visitor FROM replay_chunks WHERE site = ? AND session = ?")
+        .get(site.name, session) as Row;
+      // A visit belongs to the visitor that started it.
+      if (used.visitor && used.visitor !== visitor) return { accepted: false };
+      if ((used.n as number) + data.length > REPLAY_MAX) return { accepted: false };
+      // Emails, tokens and keys anywhere in the page's text or attributes are masked here too.
+      const kept = gzipSync(mask(text));
+      const at = new Date(Math.min(clock(), Math.max(...events.map((e) => (e as { timestamp: number }).timestamp)))).toISOString();
+      db.prepare("INSERT OR IGNORE INTO replay_chunks (site, session, visitor, seq, at, size, data) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
+        site.name,
+        session,
+        visitor,
+        seq,
+        at,
+        kept.length,
+        kept,
+      );
+      db.prepare("UPDATE sessions SET replay = 1 WHERE site = ? AND id = ? AND visitor = ?").run(site.name, session, visitor);
+      return { accepted: true };
+    },
+
+    /** Visits with a replay, newest first. */
+    replays(name: string, range: Range, cursor: string | undefined, max: number): Page<ReturnType<typeof presentSession>> {
+      const site = siteOf(name);
+      const { from } = period(range);
+      const offset = decodeCursor(cursor);
+      const rows = all<Row>(
+        "SELECT * FROM sessions WHERE site = ? AND replay = 1 AND last_at >= ? ORDER BY last_at DESC, id LIMIT ? OFFSET ?",
+        site.name,
+        from,
+        max + 1,
+        offset,
+      );
+      return { items: rows.slice(0, max).map(presentSession), ...(rows.length > max && { nextCursor: encodeCursor(offset + max) }) };
+    },
+
+    /** One visit's replay: its rrweb events in order, for the player. */
+    recording(name: string, id: string) {
+      const site = siteOf(name);
+      const s = db.prepare("SELECT * FROM sessions WHERE site = ? AND id = ?").get(site.name, id) as Row | undefined;
+      const chunks = all<Row>("SELECT data FROM replay_chunks WHERE site = ? AND session = ? ORDER BY seq", site.name, id);
+      if (!s || !chunks.length) throw notFound("The replay");
+      const events = chunks.flatMap((c) => JSON.parse(gunzipSync(c.data as Uint8Array).toString("utf8")) as unknown[]);
+      return { visit: presentSession(s), events };
+    },
+
     /** Visits of a site, newest first, of one visitor or one user of the site if asked. */
     visits(filter: { site: string; visitor?: string; user?: string }, cursor: string | undefined, max: number): Page<ReturnType<typeof presentSession>> {
       siteOf(filter.site);
@@ -466,6 +799,9 @@ export function createAnalytics(db: DatabaseSync, { defaultRate = 6000, env = pr
         visits: sessions.map((s) => ({
           ...presentSession(s),
           timeline: all<Row>("SELECT * FROM events WHERE site = ? AND session = ? ORDER BY at, id", site.name, s.id).map(presentEvent),
+          recording: all<Row>("SELECT data FROM replay_chunks WHERE site = ? AND session = ? ORDER BY seq", site.name, s.id).flatMap(
+            (c) => JSON.parse(gunzipSync(c.data as Uint8Array).toString("utf8")) as unknown[],
+          ),
         })),
       };
     },
@@ -507,6 +843,9 @@ export function createAnalytics(db: DatabaseSync, { defaultRate = 6000, env = pr
           keep: s.keep,
           rateLimit: s.rateLimit ?? defaultRate,
           serverKey: s.serverKey ? { variable: s.serverKey, set: !!env[s.serverKey] } : null,
+          funnels: s.funnels,
+          forms: s.forms,
+          replays: s.replays,
           today: { visitors: (d?.visitors as number) ?? 0, pageviews: (d?.pageviews as number) ?? 0 },
           lastEventAt: (db.prepare("SELECT MAX(last_at) AS t FROM sessions WHERE site = ?").get(s.name) as { t: string | null }).t,
         };
@@ -528,6 +867,16 @@ export function createAnalytics(db: DatabaseSync, { defaultRate = 6000, env = pr
         db.prepare("DELETE FROM sessions WHERE site = ? AND last_at < ?").run(name, before);
         db.prepare("DELETE FROM visitor_days WHERE site = ? AND day < ?").run(name, before.slice(0, 10));
         db.prepare("DELETE FROM days WHERE site = ? AND day < ?").run(name, new Date(clock() - keep.days * DAY).toISOString().slice(0, 10));
+      }
+      // Replays go after their own days, and with the site when it records them no longer.
+      for (const { site: name } of all<{ site: string }>("SELECT DISTINCT site FROM replay_chunks")) {
+        const keep = sites.get(name)?.replays?.keep ?? 0;
+        const before = new Date(clock() - keep * DAY).toISOString();
+        db.prepare("DELETE FROM replay_chunks WHERE site = ? AND at < ?").run(name, before);
+        db.prepare("UPDATE sessions SET replay = 0 WHERE site = ? AND replay = 1 AND id NOT IN (SELECT session FROM replay_chunks WHERE site = ?)").run(
+          name,
+          name,
+        );
       }
     },
   };

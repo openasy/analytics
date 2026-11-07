@@ -19,6 +19,14 @@ sites:
     goals:
       - { name: Bought, path: /checkout/done }
       - { name: Signed up, event: signup }
+    funnels:
+      - name: Trial
+        steps:
+          - { name: Pricing, path: /pricing }
+          - { path: /signup }
+          - { name: Signed up, event: signup }
+    forms: true
+    replays: { sample: 10%, keep: 14d }
   - name: blog
     domains: [http://localhost:3000]
 `);
@@ -35,8 +43,55 @@ sites:
       keep: { events: 30, days: 365 },
       rateLimit: 100,
       serverKey: "ANALYTICS_SHOP_KEY",
+      funnels: [
+        {
+          name: "Trial",
+          steps: [
+            { name: "Pricing", path: "/pricing", event: null },
+            { name: "/signup", path: "/signup", event: null },
+            { name: "Signed up", path: null, event: "signup" },
+          ],
+        },
+      ],
+      forms: true,
+      replays: { sample: 10, keep: 14 },
     });
-    expect(blog).toMatchObject({ consent: "none", goals: [], query: [], keep: { events: 90, days: 730 }, rateLimit: null, serverKey: null });
+    expect(blog).toMatchObject({
+      consent: "none",
+      goals: [],
+      query: [],
+      keep: { events: 90, days: 730 },
+      rateLimit: null,
+      serverKey: null,
+      funnels: [],
+      forms: false,
+      replays: null,
+    });
+    expect(parseConfig("sites: [{ name: a, domains: [https://a.example], replays: true }]")[0]!.replays).toEqual({ sample: 100, keep: 30 });
+  });
+
+  it("says which funnel, step or replay setting to fix", () => {
+    const site = (extra: string) => `sites:\n  - name: shop\n    domains: [https://www.example.com]\n${extra}`;
+    for (const [extra, message] of [
+      ["    funnels: [{ name: Trial, steps: [{ path: /pricing }] }]", "sites[0] (shop).funnels[0].steps is a list of 2 to 10 steps."],
+      [
+        "    funnels: [{ name: Trial, steps: [{ path: /a, event: b }, { path: /c }] }]",
+        "sites[0] (shop).funnels[0].steps[0] has a path or an event, not both.",
+      ],
+      [
+        "    funnels: [{ name: Trial, steps: [{ path: pricing }, { path: /c }] }]",
+        "sites[0] (shop).funnels[0].steps[0].path starts with /, such as /pricing or /blog/*.",
+      ],
+      [
+        "    funnels: [{ name: T, steps: [{ path: /a }, { path: /b }] }, { name: T, steps: [{ path: /a }, { path: /b }] }]",
+        "sites[0] (shop).funnels[1].name: T is a funnel twice.",
+      ],
+      ["    forms: yes please", "sites[0] (shop).forms is true or false."],
+      ["    replays: { sample: 0 }", "sites[0] (shop).replays.sample is the share of visits recorded, more than 0% up to 100%, such as 10%."],
+      ["    replays: { sample: 10%, every: 2 }", "sites[0] (shop).replays is true, false, or a map with sample and keep."],
+    ] as const)
+      expect(() => parseConfig(site(extra)), extra).toThrow(message);
+    expect(() => parseConfig("sites: [{ name: replay, domains: [https://a.example] }]")).toThrow("taken by the product's own /s/replay.js");
   });
 
   it("is empty when the file is", () => {

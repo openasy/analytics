@@ -44,8 +44,24 @@ export interface Site {
   keep: { events: number; days: number };
   rateLimit: number;
   serverKey: { variable: string; set: boolean } | null;
+  funnels: Funnel[];
+  /** Whether the script reports form fields entered and left. */
+  forms: boolean;
+  /** Session replays: the share of visits recorded, in percent, and the days kept; null when off. */
+  replays: { sample: number; keep: number } | null;
   today: { visitors: number; pageviews: number };
   lastEventAt: string | null;
+}
+
+export interface FunnelStep {
+  name: string;
+  path: string | null;
+  event: string | null;
+}
+
+export interface Funnel {
+  name: string;
+  steps: FunnelStep[];
 }
 
 export type Range = 1 | 7 | 30 | 90;
@@ -89,10 +105,14 @@ export interface Visit {
   browser: string;
   os: string;
   device: string;
+  /** Whether the visit was recorded. */
+  replay: boolean;
+  /** Bursts of three or more quick clicks on the same element. */
+  rage: number;
 }
 
 export interface VisitEvent {
-  type: "pageview" | "leave" | "click" | "event";
+  type: "pageview" | "leave" | "click" | "event" | "form";
   at: string;
   path: string | null;
   query: string | null;
@@ -104,10 +124,66 @@ export interface VisitEvent {
   props: Record<string, string | number | boolean> | null;
   duration: number | null;
   scroll: number | null;
+  x: number | null;
+  y: number | null;
+  form: string | null;
+  field: string | null;
+  kind: string | null;
+  action: "start" | "leave" | "submit" | "abandon" | null;
+  filled: boolean | null;
+  again: boolean | null;
 }
 
 export interface VisitDetail extends Visit {
   timeline: VisitEvent[];
+}
+
+export interface Funnels {
+  site: string;
+  days: Range;
+  from: string;
+  funnels: Array<{
+    name: string;
+    /** Visits that reached each step having done the ones before, and the median seconds from the step before. */
+    steps: Array<FunnelStep & { visits: number; median: number | null }>;
+    sources: Array<{ source: string; entered: number; finished: number }>;
+  }>;
+}
+
+export interface Forms {
+  site: string;
+  days: Range;
+  from: string;
+  enabled: boolean;
+  forms: Array<{
+    form: string;
+    page: string | null;
+    starts: number;
+    submits: number;
+    /** Median seconds from the first field to sending. */
+    median: number | null;
+    fields: Array<{ field: string; kind: string | null; reached: number; left: number; time: number | null; again: number }>;
+  }>;
+}
+
+export interface Heatmap {
+  site: string;
+  days: Range;
+  from: string;
+  path: string;
+  device: string | null;
+  url: string;
+  views: number;
+  clicks: number;
+  elements: Array<{ target: string; text: string | null; count: number; visitors: number }>;
+  points: Array<{ target: string; x: number; y: number; count: number }>;
+  scroll: Array<{ depth: number; share: number }>;
+  pages: Array<{ path: string; views: number }>;
+}
+
+export interface Recording {
+  visit: Visit;
+  events: Array<{ type: number; timestamp: number }>;
 }
 
 export class Unauthorized extends Error {}

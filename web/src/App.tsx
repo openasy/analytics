@@ -16,7 +16,6 @@ import {
   Panel,
   PRODUCT_IDS,
   SearchInput,
-  SegmentedControl,
   SelectField,
   StatusBadge,
   TimeSeriesChart,
@@ -35,8 +34,12 @@ import {
   Activity,
   Clock,
   Download,
+  CirclePlay,
+  ClipboardList,
   Eye,
   FileText,
+  Flame,
+  Funnel,
   Globe,
   KeyRound,
   LayoutDashboard,
@@ -51,143 +54,40 @@ import {
   Users,
   Route as RouteIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import {
-  api,
-  MfaSetupRequired,
-  Unauthorized,
-  type ProductLink,
-  type Range,
-  type Report,
-  type Site,
-  type Summary,
-  type Visit,
-  type VisitDetail,
-} from "./api.ts";
-import { useT, type T } from "./i18n.ts";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { type ProductLink, type Report, type Site, type Summary, type Visit, type VisitDetail } from "./api.ts";
+import { Code, duration, nothing, percent, ReportHeader, shortDay, time, useApi, useChoice, useReport, type Call, type Choice } from "./common.tsx";
+import { useT } from "./i18n.ts";
+import { FormsPage, FunnelsPage, HeatmapsPage, ReplayPage, ReplaysPage } from "./insights.tsx";
 import { search } from "./search.ts";
 
-const PAGES = ["pages", "sources", "behavior", "visits", "sites", "setup", "account", "members", "signin", "tokens", "about"] as const;
-type Route = { page: "overview" | (typeof PAGES)[number] } | { page: "visit"; id: string };
+const PAGES = [
+  "pages",
+  "sources",
+  "behavior",
+  "funnels",
+  "forms",
+  "heatmaps",
+  "replays",
+  "visits",
+  "sites",
+  "setup",
+  "account",
+  "members",
+  "signin",
+  "tokens",
+  "about",
+] as const;
+type Route = { page: "overview" | (typeof PAGES)[number] } | { page: "visit" | "replay"; id: string };
 /** The first path segments that are pages of this UI, for followLinks. */
 export const PATHS = ["overview", ...PAGES];
 function parseRoute(path: string): Route {
   const [page, id] = path.replace(/^\//, "").split("/");
   if (page === "visits" && id) return { page: "visit", id: decodeURIComponent(id) };
+  if (page === "replays" && id) return { page: "replay", id: decodeURIComponent(id) };
   if ((PAGES as readonly string[]).includes(page ?? "")) return { page: page as (typeof PAGES)[number] };
   return { page: "overview" };
 }
-
-/** Data loading with the session; when it ends, the sign-in screen comes back. */
-function useApi() {
-  const { expired, refresh } = useAuth();
-  return useCallback(
-    async <T,>(path: string, init?: RequestInit): Promise<T> => {
-      try {
-        return await api<T>(path, init);
-      } catch (err) {
-        if (err instanceof Unauthorized) expired();
-        if (err instanceof MfaSetupRequired) void refresh();
-        throw err;
-      }
-    },
-    [expired, refresh],
-  );
-}
-type Call = ReturnType<typeof useApi>;
-
-function Code({ children }: { children: ReactNode }) {
-  return <pre className="m-0 overflow-x-auto rounded-md bg-subtle px-2.5 py-2 font-mono text-xs text-fg">{children}</pre>;
-}
-
-// ---------------------------------------------------------------- Formatting
-
-/** 75 → "1m 15s"; an hour or more → "1h 5m". */
-export function duration(seconds: number | null): string {
-  if (seconds === null) return "–";
-  const s = Math.round(seconds);
-  if (s < 60) return `${s}s`;
-  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
-  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
-}
-const percent = (v: number) => `${Math.round(v * 100)}%`;
-const shortDay = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
-const time = (iso: string) => new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-
-// ---------------------------------------------------------------- Site and period
-
-/** The site and period every report page shows, kept for this browser only. */
-function useChoice(sites: Site[] | undefined) {
-  const read = (k: string) => {
-    try {
-      return localStorage.getItem(k);
-    } catch {
-      return null;
-    }
-  };
-  const write = (k: string, v: string) => {
-    try {
-      localStorage.setItem(k, v);
-    } catch {
-      // the choice lasts for this page only
-    }
-  };
-  const [picked, setPicked] = useState(() => read("analytics.site") ?? "");
-  const [range, setRange] = useState<Range>(() => (Number(read("analytics.days")) as Range) || 7);
-  const site = sites?.some((s) => s.name === picked) ? picked : (sites?.[0]?.name ?? "");
-  return {
-    site,
-    range,
-    setSite: (s: string) => (setPicked(s), write("analytics.site", s)),
-    setRange: (r: Range) => (setRange(r), write("analytics.days", String(r))),
-  };
-}
-type Choice = ReturnType<typeof useChoice>;
-
-function ChoiceBar({ sites, choice }: { sites: Site[]; choice: Choice }) {
-  const t = useT();
-  return (
-    <span className="flex flex-wrap items-center gap-2">
-      {sites.length > 1 && (
-        <SelectField
-          aria-label={t("choice.site")}
-          value={choice.site}
-          onChange={(e) => choice.setSite(e.target.value)}
-          options={sites.map((s) => ({ value: s.name, label: s.name }))}
-        />
-      )}
-      <SegmentedControl<string>
-        label={t("choice.period")}
-        size="sm"
-        value={String(choice.range)}
-        onChange={(v) => choice.setRange(Number(v) as Range)}
-        options={[
-          { value: "1", label: t("choice.today") },
-          { value: "7", label: t("choice.days", { count: 7 }) },
-          { value: "30", label: t("choice.days", { count: 30 }) },
-          { value: "90", label: t("choice.days", { count: 90 }) },
-        ]}
-      />
-    </span>
-  );
-}
-
-function useReport(call: Call, choice: Choice) {
-  const [report, setReport] = useState<Report | null>();
-  useEffect(() => {
-    if (!choice.site) return;
-    setReport(undefined);
-    void call<Report>(`/api/v1/report?${new URLSearchParams({ site: choice.site, days: String(choice.range) })}`).then(setReport, () => setReport(null));
-  }, [call, choice.site, choice.range]);
-  return report;
-}
-
-/** The heading of a report page: its title, the site and period it covers, and where to change them. */
-function ReportHeader({ title, description, sites, choice }: { title: string; description: string; sites: Site[]; choice: Choice }) {
-  return <PageHeader title={title} description={description} actions={<ChoiceBar sites={sites} choice={choice} />} />;
-}
-
-const nothing = (t: T) => <EmptyState title={t("report.nothingYet")}>{t("report.nothingYetDetail")}</EmptyState>;
 
 // ---------------------------------------------------------------- Overview
 
@@ -590,6 +490,19 @@ function VisitPage({ call, id, choice }: { call: Call; id: string; choice: Choic
         note: t("visit.leftDetail", { time: duration(e.duration === null ? null : e.duration / 1000), scroll: e.scroll ?? 0 }),
       };
     if (e.type === "click") return { label: t("visit.clicked"), detail: e.text ?? e.target, note: e.href ? `→ ${e.href}` : e.target };
+    if (e.type === "form") {
+      const field = e.field ? t("visit.field", { field: e.field, kind: e.kind ?? "" }) : null;
+      if (e.action === "start") return { label: t("visit.formStarted"), detail: e.form, note: field };
+      if (e.action === "submit") return { label: t("visit.formSent"), detail: e.form, note: null };
+      if (e.action === "abandon") return { label: t("visit.formLeft"), detail: e.form, note: field && t("visit.formLeftAt", { field: e.field ?? "" }) };
+      return {
+        label: t("visit.fieldLeft"),
+        detail: e.field,
+        note: [duration(e.duration === null ? null : e.duration / 1000), e.filled ? t("visit.filled") : t("visit.empty"), e.again ? t("visit.again") : null]
+          .filter(Boolean)
+          .join(", "),
+      };
+    }
     return {
       label: t("visit.event"),
       detail: e.name,
@@ -606,15 +519,23 @@ function VisitPage({ call, id, choice }: { call: Call; id: string; choice: Choic
         title={t("visit.title")}
         description={visit ? `${time(visit.startedAt)} · ${visit.browser}, ${visit.os} · ${visit.source ?? t("sources.direct")}` : undefined}
         actions={
-          visit &&
-          can("admin") && (
+          visit && (
             <>
-              <Button icon={<Download />} onClick={() => void exportData()}>
-                {t("visit.export")}
-              </Button>
-              <Button icon={<Trash2 />} onClick={() => setDeleting(true)}>
-                {t("visit.delete")}
-              </Button>
+              {visit.replay && (
+                <Button icon={<CirclePlay />} variant="primary" onClick={() => navigate(`/replays/${encodeURIComponent(visit.id)}`)}>
+                  {t("visit.watch")}
+                </Button>
+              )}
+              {can("admin") && (
+                <>
+                  <Button icon={<Download />} onClick={() => void exportData()}>
+                    {t("visit.export")}
+                  </Button>
+                  <Button icon={<Trash2 />} onClick={() => setDeleting(true)}>
+                    {t("visit.delete")}
+                  </Button>
+                </>
+              )}
             </>
           )
         }
@@ -632,6 +553,7 @@ function VisitPage({ call, id, choice }: { call: Call; id: string; choice: Choic
             {visit.user && <Badge mono>{t("visit.user", { id: visit.user })}</Badge>}
             {visit.utm.campaign && <Badge>{t("visit.campaign", { name: visit.utm.campaign })}</Badge>}
             <Badge>{t(`device.${visit.device}` as "device.desktop")}</Badge>
+            {visit.rage > 0 && <Badge tone="warning">{t("replay.rage", { count: visit.rage })}</Badge>}
           </div>
           <Panel title={t("visit.timeline")} description={t("visit.timelineDetail")}>
             <ol className="analytics-list flex flex-col gap-2">
@@ -689,6 +611,13 @@ const EXAMPLE = `sites:
     goals:
       - { name: Bought, path: /checkout/done }
       - { name: Signed up, event: signup }
+    funnels:              # steps a visit takes in order
+      - name: Trial
+        steps:
+          - { name: Pricing, path: /pricing }
+          - { name: Signed up, event: signup }
+    forms: true           # which form fields are entered and left, never what they hold
+    replays: { sample: 10%, keep: 30d }   # record a share of visits, with every field masked
     # serverKey: ANALYTICS_SHOP_KEY   # the variable that holds the key for events from your servers`;
 
 function FileState({ summary }: { summary?: Summary }) {
@@ -728,6 +657,17 @@ function SitesPage({ sites, summary }: { sites: Site[]; summary?: Summary }) {
       cell: (s) => (s.consent === "required" ? <Badge tone="info">{t("sites.asksFirst")}</Badge> : <Badge>{t("sites.fromFirstPage")}</Badge>),
     },
     {
+      id: "records",
+      header: t("sites.records"),
+      cell: (s) => (
+        <span className="flex flex-wrap gap-1">
+          {s.funnels.length > 0 && <Badge>{t("sites.funnels", { count: s.funnels.length })}</Badge>}
+          {s.forms && <Badge>{t("sites.forms")}</Badge>}
+          {s.replays && <Badge tone="info">{t("sites.replays", { sample: s.replays.sample })}</Badge>}
+        </span>
+      ),
+    },
+    {
       id: "today",
       header: t("sites.today"),
       align: "right",
@@ -746,7 +686,7 @@ function SitesPage({ sites, summary }: { sites: Site[]; summary?: Summary }) {
           columns={columns}
           rows={sites}
           getRowId={(s) => s.name}
-          minWidth={720}
+          minWidth={860}
           empty={<EmptyState title={t("sites.none")}>{t("sites.noneDetail")}</EmptyState>}
         />
       </Panel>
@@ -870,6 +810,10 @@ function Product() {
     { id: "pages", label: msg("nav.pages"), icon: FileText },
     { id: "sources", label: msg("nav.sources"), icon: Share2 },
     { id: "behavior", label: msg("nav.behavior"), icon: MousePointerClick },
+    { id: "funnels", label: msg("nav.funnels"), icon: Funnel },
+    { id: "forms", label: msg("nav.forms"), icon: ClipboardList },
+    { id: "heatmaps", label: msg("nav.heatmaps"), icon: Flame },
+    { id: "replays", label: msg("nav.replays"), icon: CirclePlay },
     { id: "visits", label: msg("nav.visits"), icon: RouteIcon, count: summary?.live || undefined },
     { id: "sites", label: msg("nav.sites"), icon: Globe, count: summary?.sites },
   ];
@@ -883,9 +827,9 @@ function Product() {
       : []),
     { id: "account", label: msg("nav.account"), icon: UserRound },
   ];
-  const active = route.page === "visit" ? "visits" : route.page;
+  const active = route.page === "visit" ? "visits" : route.page === "replay" ? "replays" : route.page;
   const roleName = me.user.role.charAt(0).toUpperCase() + me.user.role.slice(1);
-  const reports = route.page === "overview" || route.page === "pages" || route.page === "sources" || route.page === "behavior" || route.page === "visits";
+  const reports = ["overview", "pages", "sources", "behavior", "funnels", "forms", "heatmaps", "replays", "visits"].includes(route.page);
   const list = sites ?? [];
 
   return (
@@ -923,6 +867,16 @@ function Product() {
         <SourcesPage call={call} sites={list} choice={choice} />
       ) : route.page === "behavior" ? (
         <BehaviorPage call={call} sites={list} choice={choice} />
+      ) : route.page === "funnels" ? (
+        <FunnelsPage call={call} sites={list} choice={choice} />
+      ) : route.page === "forms" ? (
+        <FormsPage call={call} sites={list} choice={choice} />
+      ) : route.page === "heatmaps" ? (
+        <HeatmapsPage call={call} sites={list} choice={choice} />
+      ) : route.page === "replays" ? (
+        <ReplaysPage call={call} sites={list} choice={choice} />
+      ) : route.page === "replay" ? (
+        <ReplayPage key={route.id} call={call} id={route.id} choice={choice} />
       ) : route.page === "visits" ? (
         <VisitsPage call={call} sites={list} choice={choice} />
       ) : route.page === "visit" ? (

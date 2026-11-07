@@ -13,6 +13,19 @@ export interface Goal {
   event: string | null;
 }
 
+/** One step of a funnel: a page view whose path matches, or one of the site's own events. */
+export interface FunnelStep {
+  name: string;
+  path: string | null;
+  event: string | null;
+}
+
+/** Steps a visit takes in order, such as pricing, the sign-up form and signing up. */
+export interface Funnel {
+  name: string;
+  steps: FunnelStep[];
+}
+
 export interface Site {
   /** Unique in the file; the script is served at /s/<name>.js. */
   name: string;
@@ -31,13 +44,18 @@ export interface Site {
   rateLimit: number | null;
   /** The environment variable holding the key for events sent from the site's servers; never the key itself. */
   serverKey: string | null;
+  funnels: Funnel[];
+  /** Whether the script reports which form fields are entered and left: their names and types, never what they hold. */
+  forms: boolean;
+  /** Session replays, recorded for this share of visits (0 to 100) and kept this many days; null when off. */
+  replays: { sample: number; keep: number } | null;
 }
 
 const NAME = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const ENV = /^[A-Z][A-Z0-9_]{0,63}$/;
 const PARAM = /^[A-Za-z0-9_.-]{1,64}$/;
 const PATTERN = /^\/[^\s]{0,255}$/;
-const KEYS = ["name", "domains", "consent", "goals", "query", "ignore", "keep", "rateLimit", "serverKey"];
+const KEYS = ["name", "domains", "consent", "goals", "query", "ignore", "keep", "rateLimit", "serverKey", "funnels", "forms", "replays"];
 const isObj = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
 
 /** "90d" or a number of days. */
@@ -83,6 +101,8 @@ export function parseConfig(text: string): Site[] {
     if (extra.length) throw new Error(`${at}: unknown ${extra.join(", ")}; a site takes ${KEYS.join(", ")}.`);
     if (typeof s.name !== "string" || !NAME.test(s.name)) throw new Error(`${at}.name is required: up to 32 lowercase letters, digits and -.`);
     const name = s.name;
+    // /s/replay.js and /s/heatmap.js are the product's own scripts.
+    if (name === "replay" || name === "heatmap") throw new Error(`${at}.name: ${name} is taken by the product's own /s/${name}.js; pick another name.`);
     if (seen.has(name)) throw new Error(`${at}.name: ${name} is in the file twice.`);
     seen.add(name);
     const where = `${at} (${name})`;
@@ -122,6 +142,51 @@ export function parseConfig(text: string): Site[] {
     if (s.serverKey !== undefined && (typeof s.serverKey !== "string" || !ENV.test(s.serverKey)))
       throw new Error(`${where}.serverKey is the name of an environment variable, such as ANALYTICS_SHOP_KEY, never the key itself.`);
 
+    const funnels: Funnel[] = [];
+    if (s.funnels !== undefined) {
+      if (!Array.isArray(s.funnels) || s.funnels.length > 20) throw new Error(`${where}.funnels is a list of up to 20 funnels.`);
+      const names = new Set<string>();
+      s.funnels.forEach((f, n) => {
+        const fat = `${where}.funnels[${n}]`;
+        if (!isObj(f) || Object.keys(f).some((k) => k !== "name" && k !== "steps")) throw new Error(`${fat} takes name and steps.`);
+        if (typeof f.name !== "string" || !f.name.trim() || f.name.length > 64) throw new Error(`${fat}.name is up to 64 characters.`);
+        if (names.has(f.name)) throw new Error(`${fat}.name: ${f.name} is a funnel twice.`);
+        names.add(f.name);
+        if (!Array.isArray(f.steps) || f.steps.length < 2 || f.steps.length > 10) throw new Error(`${fat}.steps is a list of 2 to 10 steps.`);
+        const steps = f.steps.map((st, k) => {
+          const sat = `${fat}.steps[${k}]`;
+          if (!isObj(st) || Object.keys(st).some((x) => !["name", "path", "event"].includes(x)))
+            throw new Error(`${sat} takes a path or an event, and a name.`);
+          const hasPath = st.path !== undefined;
+          if (hasPath === (st.event !== undefined)) throw new Error(`${sat} has a path or an event, not both.`);
+          if (hasPath && (typeof st.path !== "string" || !PATTERN.test(st.path))) throw new Error(`${sat}.path starts with /, such as /pricing or /blog/*.`);
+          if (!hasPath && (typeof st.event !== "string" || !PARAM.test(st.event)))
+            throw new Error(`${sat}.event is an event name of up to 64 letters, digits and _ . -.`);
+          if (st.name !== undefined && (typeof st.name !== "string" || !st.name.trim() || st.name.length > 64))
+            throw new Error(`${sat}.name is up to 64 characters.`);
+          const rule = (hasPath ? st.path : st.event) as string;
+          return { name: typeof st.name === "string" ? st.name.trim() : rule, path: hasPath ? rule : null, event: hasPath ? null : rule };
+        });
+        funnels.push({ name: f.name.trim(), steps });
+      });
+    }
+    if (s.forms !== undefined && typeof s.forms !== "boolean") throw new Error(`${where}.forms is true or false.`);
+    let replays: Site["replays"] = null;
+    if (s.replays !== undefined && s.replays !== false) {
+      const r = s.replays === true ? {} : s.replays;
+      if (!isObj(r) || Object.keys(r).some((k) => k !== "sample" && k !== "keep"))
+        throw new Error(`${where}.replays is true, false, or a map with sample and keep.`);
+      const m =
+        typeof r.sample === "number"
+          ? [String(r.sample), String(r.sample)]
+          : typeof r.sample === "string"
+            ? /^(\d+(?:\.\d+)?)\s*%?$/.exec(r.sample.trim())
+            : null;
+      const sample = r.sample === undefined ? 100 : m ? Number(m[1]) : NaN;
+      if (!(sample > 0 && sample <= 100)) throw new Error(`${where}.replays.sample is the share of visits recorded, more than 0% up to 100%, such as 10%.`);
+      replays = { sample, keep: r.keep === undefined ? 30 : days(r.keep, `${where}.replays.keep`, 1, 365) };
+    }
+
     return {
       name,
       domains,
@@ -132,6 +197,9 @@ export function parseConfig(text: string): Site[] {
       keep,
       rateLimit: (s.rateLimit as number | undefined) ?? null,
       serverKey: (s.serverKey as string | undefined) ?? null,
+      funnels,
+      forms: s.forms === true,
+      replays,
     };
   });
 }

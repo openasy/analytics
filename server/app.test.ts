@@ -22,7 +22,11 @@ describe("the script", () => {
     expect(res.headers.get("content-type")).toBe("text/javascript");
     expect(res.headers.get("cache-control")).toBe("public, max-age=300");
     const text = await res.text();
-    expect(text).toContain(`OAT.start({"site":"shop","endpoint":"${app.base}/api/v1/collect","consent":"none"});`);
+    expect(text).toContain(
+      `OAT.start({"site":"shop","endpoint":"${app.base}/api/v1/collect","consent":"none","forms":true,"replay":{"sample":10,"script":"${app.base}/s/replay.js","endpoint":"${app.base}/api/v1/replay"},"heatmap":"${app.base}/s/heatmap.js"});`,
+    );
+    expect(await (await fetch(`${app.base}/s/replay.js`)).text()).toBe("/* replay */");
+    expect(await (await fetch(`${app.base}/s/heatmap.js`)).text()).toBe("/* heatmap */");
     expect(await (await fetch(`${app.base}/s/blog.js`)).text()).toContain('"consent":"required"');
     const missing = await fetch(`${app.base}/s/nope.js`);
     expect(missing.status).toBe(404);

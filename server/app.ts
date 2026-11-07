@@ -8,7 +8,7 @@ import { AuthError, identityOrigin, mergeOpenApi, sendProblem, type Auth, type R
 import { log } from "./log.ts";
 import { countRequest, renderMetrics } from "./metrics.ts";
 import type { ProductLink } from "./products.ts";
-import { AnalyticsError, parseLimit, parseRange, type Analytics, type ProblemCode } from "./analytics.ts";
+import { AnalyticsError, CHUNK_LIMIT, parseLimit, parseRange, type Analytics, type ProblemCode } from "./analytics.ts";
 
 export interface AppOptions {
   db: DatabaseSync;
@@ -22,6 +22,9 @@ export interface AppOptions {
   adminToken?: string;
   /** The built tracker (dist/tracker/a.js), wrapped per site at /s/<site>.js. */
   tracker?: string;
+  /** The replay recorder and the heatmap overlay (dist/tracker/replay.js, heatmap.js), at /s/replay.js and /s/heatmap.js. */
+  replayScript?: string;
+  heatmapScript?: string;
   /** Built web UI; omit to run headless (ADR 0018). */
   webDir?: string;
   /** Built API reference (Swagger UI), served at /api/docs. */
@@ -60,12 +63,20 @@ const TYPES: Record<string, string> = {
 // Identity keeps people's theme and language when they sign in through it; the pages read them there (ADR 0033).
 const IDENTITY = identityOrigin(process.env);
 
-const SECURITY_HEADERS = {
-  "x-content-type-options": "nosniff",
-  "referrer-policy": "no-referrer",
-  "x-frame-options": "DENY",
-  "content-security-policy": `default-src 'self'; connect-src 'self'${IDENTITY ? ` ${IDENTITY}` : ""}; img-src 'self' data:; style-src 'self' 'unsafe-inline'`,
-};
+/**
+ * The pages run nothing from elsewhere. The sites' own origins are allowed only where the heatmap and the replays need
+ * them: the heatmap frames a site's page, and a replay shows the page's images, styles and fonts as they were.
+ */
+function securityHeaders(sites: string[] = []) {
+  const s = sites.length ? ` ${sites.join(" ")}` : "";
+  return {
+    "x-content-type-options": "nosniff",
+    "referrer-policy": "no-referrer",
+    "x-frame-options": "DENY",
+    "content-security-policy": `default-src 'self'; connect-src 'self'${IDENTITY ? ` ${IDENTITY}` : ""}; img-src 'self' data: blob:${s}; style-src 'self' 'unsafe-inline'${s}; font-src 'self' data:${s}; frame-src 'self'${s}; frame-ancestors 'none'`,
+  };
+}
+let SECURITY_HEADERS = securityHeaders();
 
 /** Largest batch accepted, after decompression. Fifty events with their addresses are a few KiB. */
 const BATCH_LIMIT = 64 * 1024;
@@ -168,6 +179,8 @@ export function createApp({
   auth,
   adminToken,
   tracker,
+  replayScript,
+  heatmapScript,
   webDir,
   docsDir,
   openapi,
@@ -210,6 +223,38 @@ export function createApp({
         ),
     },
     { method: "GET", path: "/api/v1/visits/:id", auth: "viewer", handle: ({ url, params }) => analytics.visit(param(url, "site", true)!, params[0]!) },
+
+    {
+      method: "GET",
+      path: "/api/v1/funnels",
+      auth: "viewer",
+      handle: ({ url }) => analytics.funnels(param(url, "site", true)!, parseRange(url.searchParams.get("days"))),
+    },
+    {
+      method: "GET",
+      path: "/api/v1/forms",
+      auth: "viewer",
+      handle: ({ url }) => analytics.forms(param(url, "site", true)!, parseRange(url.searchParams.get("days"))),
+    },
+    {
+      method: "GET",
+      path: "/api/v1/heatmap",
+      auth: "viewer",
+      handle: ({ url }) => {
+        const path = url.searchParams.get("path") ?? "/";
+        if (!path.startsWith("/") || path.length > 512) throw new AnalyticsError(422, "invalid-body", "path is a page's path, such as /pricing.");
+        const device = param(url, "device");
+        if (device && !["desktop", "mobile", "tablet"].includes(device)) throw new AnalyticsError(422, "invalid-body", "device is desktop, mobile or tablet.");
+        return analytics.heatmap(param(url, "site", true)!, path, parseRange(url.searchParams.get("days")), device);
+      },
+    },
+    {
+      method: "GET",
+      path: "/api/v1/replays",
+      auth: "viewer",
+      handle: ({ url }) => page("replays", analytics.replays(param(url, "site", true)!, parseRange(url.searchParams.get("days")), cursor(url), limit(url))),
+    },
+    { method: "GET", path: "/api/v1/replays/:id", auth: "viewer", handle: ({ url, params }) => analytics.recording(param(url, "site", true)!, params[0]!) },
 
     // A visitor's data, for requests under GDPR and KVKK (ADR 0015).
     { method: "GET", path: "/api/v1/visitors/:id", auth: "admin", handle: ({ url, params }) => analytics.visitor(param(url, "site", true)!, params[0]!) },
@@ -256,13 +301,56 @@ export function createApp({
     }
   }
 
+  /** A chunk of a visit's replay, gzipped, with the visit's ids in the query, from one of the site's pages. */
+  async function replayChunk(req: IncomingMessage, res: ServerResponse, url: URL) {
+    const headers = cors(req);
+    try {
+      // The body is the gzipped chunk itself, sent as text/plain so the page needs no preflight; it is not unpacked here.
+      if (req.headers["content-encoding"]) throw new AnalyticsError(400, "invalid-body", "Send the gzipped chunk as the body, without Content-Encoding.");
+      const data = await readBody(req, CHUNK_LIMIT);
+      const id = (n: string) => {
+        const v = url.searchParams.get(n);
+        if (!v || !/^[A-Za-z0-9_-]{8,64}$/.test(v)) throw new AnalyticsError(422, "invalid-batch", `${n} is an id of 8 to 64 letters, digits, _ and -.`);
+        return v;
+      };
+      const seq = Number(url.searchParams.get("seq"));
+      if (!Number.isInteger(seq) || seq < 0 || seq > 100_000) throw new AnalyticsError(422, "invalid-batch", "seq is the chunk's number in the visit, from 0.");
+      const result = analytics.replay({
+        site: param(url, "site", true)!,
+        visitor: id("visitor"),
+        session: id("session"),
+        seq,
+        data,
+        origin: req.headers.origin,
+        userAgent: req.headers["user-agent"],
+      });
+      json(res, 202, result, headers);
+    } catch (err) {
+      if (!(err instanceof AnalyticsError)) throw err;
+      problem(res, err.status, err.code, err.message, { ...headers, ...(err.retryAfter ? { "retry-after": String(err.retryAfter) } : {}) });
+      if (!req.complete) req.resume();
+    }
+  }
+
   /** The tracker with the site's settings, for one script tag on the site's pages. */
   function script(res: ServerResponse, name: string) {
-    const site = analytics.sites().find((s) => s.name === name);
     const headers = { "cache-control": "public, max-age=300" };
+    if (name === "replay" || name === "heatmap") {
+      const body = name === "replay" ? replayScript : heatmapScript;
+      if (!body) return send(res, 503, `/* OpenAsy Analytics: the ${name} script is not built. */\n`, "text/javascript", headers);
+      return send(res, 200, body, "text/javascript", headers);
+    }
+    const site = analytics.sites().find((s) => s.name === name);
     if (!site) return send(res, 404, `/* OpenAsy Analytics: no site named ${JSON.stringify(name)} in the sites file. */\n`, "text/javascript", headers);
     if (!tracker) return send(res, 503, "/* OpenAsy Analytics: the tracker is not built. */\n", "text/javascript", headers);
-    const config = { site: site.name, endpoint: `${publicUrl}/api/v1/collect`, consent: site.consent };
+    const config = {
+      site: site.name,
+      endpoint: `${publicUrl}/api/v1/collect`,
+      consent: site.consent,
+      forms: site.forms,
+      replay: site.replays ? { sample: site.replays.sample, script: `${publicUrl}/s/replay.js`, endpoint: `${publicUrl}/api/v1/replay` } : null,
+      heatmap: `${publicUrl}/s/heatmap.js`,
+    };
     send(res, 200, `/* OpenAsy Analytics */\n(function(){\n${tracker}\nOAT.start(${JSON.stringify(config)});\n})();\n`, "text/javascript", headers);
   }
 
@@ -300,6 +388,7 @@ export function createApp({
     if (site && (req.method === "GET" || req.method === "HEAD")) return (script(res, site[1]!), "/s/{site}.js");
 
     if (path === "/api/v1/collect" && req.method === "POST") return (await collect(req, res), "/api/v1/collect");
+    if (path === "/api/v1/replay" && req.method === "POST") return (await replayChunk(req, res, url), "/api/v1/replay");
 
     if (path === "/api/openapi.json" && spec) return (send(res, 200, spec), "/api/openapi.json");
 
@@ -351,6 +440,7 @@ export function createApp({
 
   return async (req: IncomingMessage, res: ServerResponse) => {
     const started = performance.now();
+    SECURITY_HEADERS = securityHeaders([...new Set(analytics.sites().flatMap((s) => s.domains))]);
     let routeName = "error";
     try {
       routeName = await route(req, res);
@@ -360,7 +450,7 @@ export function createApp({
     }
     countRequest(req.method ?? "GET", routeName, res.statusCode);
     // Batches arrive with every page view; logging each would put the sites' traffic in the logs.
-    if (routeName !== "/healthz" && routeName !== "/metrics" && routeName !== "/api/v1/collect" && routeName !== "/s/{site}.js") {
+    if (!["/healthz", "/metrics", "/api/v1/collect", "/api/v1/replay", "/s/{site}.js"].includes(routeName)) {
       log("info", "request", { method: req.method, path: url(req), status: res.statusCode, ms: Math.round(performance.now() - started) });
     }
   };

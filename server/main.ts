@@ -16,6 +16,10 @@ const defaultRate = Number(process.env.ANALYTICS_RATE_LIMIT ?? 6000);
 const webDir = new URL("../dist/web", import.meta.url).pathname;
 const docsDir = new URL("../dist/docs", import.meta.url).pathname;
 const trackerFile = new URL("../dist/tracker/a.js", import.meta.url).pathname;
+const scriptFile = (name: string) => {
+  const file = new URL(`../dist/tracker/${name}.js`, import.meta.url).pathname;
+  return existsSync(file) ? readFileSync(file, "utf8") : undefined;
+};
 const openapi = JSON.parse(readFileSync(new URL("../openapi.json", import.meta.url), "utf8")) as Record<string, unknown>;
 const headless = process.env.ANALYTICS_HEADLESS === "true";
 // Set it to keep /metrics off the port that is published or behind an ingress (ADR 0026).
@@ -60,6 +64,8 @@ const server = createServer(
     publicUrl,
     auth,
     tracker: existsSync(trackerFile) ? readFileSync(trackerFile, "utf8") : undefined,
+    replayScript: scriptFile("replay"),
+    heatmapScript: scriptFile("heatmap"),
     webDir: !headless && existsSync(webDir) ? webDir : undefined,
     docsDir: existsSync(docsDir) ? docsDir : undefined,
     openapi,

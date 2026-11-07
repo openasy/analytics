@@ -15,7 +15,15 @@ const EVENT_NAME = /^[A-Za-z0-9_.:-]{1,64}$/;
 const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 const HAS_EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
 const PHONE = /^\+?[\d\s().-]{7,20}$/;
-export const TYPES = ["pageview", "leave", "click", "event", "forget"] as const;
+export const TYPES = ["pageview", "leave", "click", "event", "form", "forget"] as const;
+/** What a form event says: a field was entered first (start), left, or the form was sent or given up. */
+export const FORM_ACTIONS = ["start", "leave", "submit", "abandon"] as const;
+export type FormAction = (typeof FORM_ACTIONS)[number];
+/** Kinds of form fields; anything else is other. */
+export const FIELD_KINDS = ["text", "email", "password", "tel", "number", "url", "search", "date", "select", "textarea", "checkbox", "radio", "file", "other"];
+const FIELD = /^[A-Za-z0-9_.:[\]-]{1,64}$/;
+/** Field names that say what a field holds too plainly: they are kept as their kind only. */
+const SENSITIVE_FIELD = /pass|pwd|secret|token|card|cc-?(num|csc|exp)|cvc|cvv|iban|ssn|tckn|kimlik|account|routing/i;
 export type EventType = (typeof TYPES)[number];
 export const MAX_EVENTS = 50;
 
@@ -143,9 +151,20 @@ export interface PageEvent {
   /** event: its name and properties. */
   name: string | null;
   props: Record<string, string | number | boolean> | null;
-  /** leave: milliseconds on the page and how far down it was read, 0 to 100. */
+  /** leave: milliseconds on the page and how far down it was read, 0 to 100. form: milliseconds in the field. */
   duration: number | null;
   scroll: number | null;
+  /** click: where in the element it landed, in thousandths of its width and height. */
+  x: number | null;
+  y: number | null;
+  /** form: the form's selector, the field's name and kind, and what happened; never what the field holds. */
+  form: string | null;
+  field: string | null;
+  kind: string | null;
+  action: FormAction | null;
+  /** form, leave: whether the field had anything in it, and whether it was entered before in this form. */
+  filled: boolean | null;
+  again: boolean | null;
 }
 
 export interface Batch {
@@ -192,7 +211,28 @@ export function parseBatch(body: unknown, now: () => number, query: (site: strin
   const events = body.events.map((e, i): PageEvent => {
     const at = `events[${i}]`;
     if (!isObj(e)) throw bad(`${at} must be an object.`);
-    const allowed = ["type", "at", "url", "title", "referrer", "target", "text", "href", "name", "props", "duration", "scroll"];
+    const allowed = [
+      "type",
+      "at",
+      "url",
+      "title",
+      "referrer",
+      "target",
+      "text",
+      "href",
+      "name",
+      "props",
+      "duration",
+      "scroll",
+      "x",
+      "y",
+      "form",
+      "field",
+      "kind",
+      "action",
+      "filled",
+      "again",
+    ];
     for (const k of Object.keys(e)) if (!allowed.includes(k)) throw bad(`${at}.${k} is not part of an event.`);
     if (!TYPES.includes(e.type as EventType)) throw bad(`${at}.type is one of ${TYPES.join(", ")}.`);
     let when = t;
@@ -219,6 +259,30 @@ export function parseBatch(body: unknown, now: () => number, query: (site: strin
         }
       }
     }
+    let form: Pick<PageEvent, "form" | "field" | "kind" | "action" | "filled" | "again"> = {
+      form: null,
+      field: null,
+      kind: null,
+      action: null,
+      filled: null,
+      again: null,
+    };
+    if (type === "form") {
+      if (!FORM_ACTIONS.includes(e.action as FormAction)) throw bad(`${at}.action is one of ${FORM_ACTIONS.join(", ")}.`);
+      const selector = str(e.form, `${at}.form`, 200);
+      if (!selector) throw bad(`${at}.form is the form's selector.`);
+      const kind = e.kind === undefined || e.kind === null ? null : FIELD_KINDS.includes(e.kind as string) ? (e.kind as string) : "other";
+      let field = str(e.field, `${at}.field`, 64);
+      if (field && !FIELD.test(field)) throw bad(`${at}.field is the field's name or id: up to 64 letters, digits and _ . : [ ] -.`);
+      // A field named like a card number or a password is counted by its kind only.
+      if (field && SENSITIVE_FIELD.test(field)) field = `(${kind ?? "other"})`;
+      const flag = (v: unknown, n: string) => {
+        if (v === undefined || v === null) return null;
+        if (typeof v !== "boolean") throw bad(`${at}.${n} is true or false.`);
+        return v;
+      };
+      form = { form: selector, field, kind, action: e.action as FormAction, filled: flag(e.filled, "filled"), again: flag(e.again, "again") };
+    }
     const text = str(e.text, `${at}.text`, 80);
     const title = type === "pageview" ? str(e.title, `${at}.title`, 300) : null;
     return {
@@ -232,8 +296,11 @@ export function parseBatch(body: unknown, now: () => number, query: (site: strin
       href: type === "click" ? str(e.href, `${at}.href`, 2048) : null,
       name,
       props,
-      duration: type === "leave" ? int(e.duration, `${at}.duration`, 86_400_000) : null,
+      duration: type === "leave" || type === "form" ? int(e.duration, `${at}.duration`, 86_400_000) : null,
       scroll: type === "leave" ? int(e.scroll, `${at}.scroll`, 100) : null,
+      x: type === "click" ? int(e.x, `${at}.x`, 1000) : null,
+      y: type === "click" ? int(e.y, `${at}.y`, 1000) : null,
+      ...form,
     };
   });
   return { site: body.site, visitor: body.visitor, session: body.session, user, events };

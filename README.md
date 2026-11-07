@@ -25,6 +25,14 @@ sites:
     goals:
       - { name: Bought, path: /checkout/done }
       - { name: Signed up, event: signup }
+    funnels:
+      - name: Trial
+        steps:
+          - { name: Pricing, path: /pricing }
+          - { name: Sign-up form, path: /signup }
+          - { name: Signed up, event: signup }
+    forms: true
+    replays: { sample: 10%, keep: 30d }
 ```
 
 Then add its script to the head of every page:
@@ -53,6 +61,9 @@ fix. Mount the folder rather than the file, so a save that replaces the file sti
 | `keep` | `{ events: 90d, days: 730d }` | How long visits and events, and the daily totals, are kept |
 | `rateLimit` | `ANALYTICS_RATE_LIMIT` | Events a minute the site may send |
 | `serverKey` | | The name of the environment variable that holds the key for events from the site's servers. Never the key itself |
+| `funnels` | | Up to 20, each a `name` and 2 to 10 `steps`; a step is a `path` or an `event`, with an optional `name` |
+| `forms` | `false` | `true`: the script reports which form fields are entered and left, by name and kind, never what they hold |
+| `replays` | off | `true`, or `{ sample, keep }`: record this share of visits (`10%`) and keep each replay this long (`30d`, up to `365d`) |
 
 Removing a site stops it from sending; what it sent stays until the default retention removes it.
 
@@ -66,7 +77,8 @@ openasy.consent(false); // stops, and deletes what was kept about this visitor
 openasy.ids(); // { visitor, session }, to send events of the same visit from your servers
 ```
 
-`data-analytics="Start trial"` names a click; `data-analytics-mask` keeps an element's text out of what is sent. Calls
+`data-analytics="Start trial"` names a click; `data-analytics-mask` keeps an element's text out of what is sent, and out
+of replays; `data-analytics-block` leaves an element out of replays whole. Calls
 made before the script loads are kept with `window.openasy = window.openasy || { q: [] }` and
 `openasy.q.push(["track", "signup"])`.
 
@@ -90,10 +102,24 @@ curl -sf -X POST https://analytics.example.com/api/v1/collect -H "x-analytics-ke
 - **Clicks** on links, buttons and elements marked `data-analytics`: a short selector, the first 80 characters of
   what the element says, and the link it follows.
 - **Your events and goals**, and the share of visits that reached each goal.
+- **Funnels.** For each funnel of the file, how many visits reached each step having taken the steps before it in
+  order, the median time between steps, and how each source converts.
+- **Forms**, on sites with `forms: true`: which forms are started and sent, and for each field how many reached it, left
+  the form there, the time in it and how often it was filled again. A field named like a password or a card number is
+  kept by its kind only.
+- **Heatmaps.** Where in each clicked element a click landed, and how far each page was read. Analytics opens the page
+  in a frame and the site's script draws the clicks on it, so the heatmap follows the page as it is today. The page
+  must let Analytics frame it (`frame-ancestors` in its Content-Security-Policy); while it is framed, it records
+  nothing.
+- **Replays**, on sites with `replays`: the share of visits the file names is recorded with
+  [rrweb](https://github.com/rrweb-io/rrweb), loaded only for those visits. Every form field is masked in the browser;
+  emails, tokens and keys in the page's text are masked again before a replay is kept, gzipped, for its own `keep`.
+  Three clicks on the same element within a second count as a rage click on the visit.
 
 ## What is not kept
 
-- The value of any form field. The script never reads one, and a batch that holds a field it does not know is refused.
+- The value of any form field. The script never reads one, a batch that holds a field it does not know is refused, and
+  replays mask every field in the browser.
 - Query strings, but for `utm_*` and the parameters a site lists. Emails, tokens and keys in addresses, titles, texts
   and properties are masked before anything is stored.
 - The IP address and the user agent. Only the browser, system and kind of device are kept.
@@ -111,7 +137,8 @@ an id in the browser and following a visitor across pages, not on where the data
 nothing is sent and nothing is stored in the browser until the site's own banner calls `openasy.consent(true)`.
 
 A visitor's data can be exported and deleted by an admin from the visit's page, or with
-`GET` and `DELETE /api/v1/visitors/{id}?site=`, for requests under GDPR Art. 15 and 17 and KVKK Art. 11.
+`GET` and `DELETE /api/v1/visitors/{id}?site=`, for requests under GDPR Art. 15 and 17 and KVKK Art. 11. The export
+holds the visitor's replays, and deleting removes them. `openasy.consent(false)` stops a replay being recorded.
 
 ## Run
 
@@ -151,8 +178,7 @@ Viewers see every report and visit; admins also export and delete a visitor's da
 
 ## Coming next
 
-Funnels, heatmaps of clicks and scroll depth, form analysis (the field people leave a form at, never its value),
-session replays with every form value masked, Core Web Vitals, and JavaScript errors sent on to Errors.
+Core Web Vitals, and JavaScript errors sent on to Errors.
 
 ## Develop
 

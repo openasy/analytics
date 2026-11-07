@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { randomId, selectorOf, start, textOf, type Config } from "./a.ts";
+import { fieldOf, randomId, selectorOf, start, textOf, type Config } from "./a.ts";
+import { place } from "./heatmap.ts";
 
 const config: Config = { site: "shop", endpoint: "https://analytics.example/api/v1/collect", consent: "none" };
 let stop: AbortController;
@@ -68,9 +69,11 @@ describe("the script", () => {
     const clicks = (await flushed()).filter((e) => e.type === "click");
     expect(clicks).toMatchObject([
       { target: "a#buy", text: "Buy now", href: "http://localhost:3000/checkout" },
-      { target: "form > input", text: "Send" },
+      { target: "form > input:nth-of-type(2)", text: "Send" },
       { target: "div > button.reveal" },
     ]);
+    // Where in the element: jsdom lays nothing out, so every click is in the middle.
+    expect(clicks[0]).toMatchObject({ x: 500, y: 500 });
     expect(clicks[2]!.text).toBeUndefined();
     expect(JSON.stringify(sent)).not.toContain("ali@example.com");
   });
@@ -115,6 +118,137 @@ describe("the script", () => {
     expect(api.ids()!.session).toBe(first);
     vi.setSystemTime(Date.now() + 31 * 60_000);
     expect(api.ids()!.session).not.toBe(first);
+  });
+});
+
+describe("forms", () => {
+  const focus = (el: Element) => el.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+  const blur = (el: Element) => el.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+
+  it("reports the fields entered and left, whether they were filled, and the form sent or given up, never a value", async () => {
+    document.body.innerHTML = `
+      <form id="signup"><input name="email" type="email"><input name="password" type="password"><select name="size"><option>-</option><option>5</option></select></form>
+      <form class="newsletter"><input name="email" type="email"></form>`;
+    start({ ...config, forms: true }, stop.signal);
+    const [email, password, size] = [...document.querySelectorAll("#signup input, #signup select")] as HTMLInputElement[];
+    focus(email!);
+    email!.value = "ali@example.com";
+    vi.advanceTimersByTime(1200);
+    blur(email!);
+    focus(password!);
+    password!.value = "hunter2-secret";
+    blur(password!);
+    focus(email!);
+    blur(email!);
+    focus(size!);
+    blur(size!);
+    document.querySelector<HTMLFormElement>("#signup")!.dispatchEvent(new SubmitEvent("submit", { bubbles: true, cancelable: true }));
+    const newsletter = document.querySelector(".newsletter input")!;
+    focus(newsletter);
+    blur(newsletter);
+    window.dispatchEvent(new Event("pagehide"));
+    const forms = (await flushed()).filter((e) => e.type === "form");
+    expect(forms.map((e) => [e.form, e.action, e.field ?? null])).toEqual([
+      ["form#signup", "start", "email"],
+      ["form#signup", "leave", "email"],
+      ["form#signup", "leave", "(password)"],
+      ["form#signup", "leave", "email"],
+      ["form#signup", "leave", "size"],
+      ["form#signup", "submit", null],
+      ["form.newsletter:nth-of-type(2)", "start", "email"],
+      ["form.newsletter:nth-of-type(2)", "leave", "email"],
+      ["form.newsletter:nth-of-type(2)", "abandon", "email"],
+    ]);
+    expect(forms[1]).toMatchObject({ duration: 1200, filled: true, again: false, kind: "email" });
+    expect(forms[3]).toMatchObject({ again: true });
+    expect(forms[4]).toMatchObject({ kind: "select", filled: false });
+    expect(JSON.stringify(sent)).not.toMatch(/ali@example|hunter2/);
+  });
+
+  it("sends nothing about forms unless the site asks for it, nor for fields in masked parts", async () => {
+    document.body.innerHTML = `<form><input name="q"></form><form data-analytics-mask><input name="iban"></form>`;
+    start(config, stop.signal);
+    focus(document.querySelector("input")!);
+    expect((await flushed()).some((e) => e.type === "form")).toBe(false);
+    stop.abort();
+    stop = new AbortController();
+    sent = [];
+    start({ ...config, forms: true }, stop.signal);
+    focus(document.querySelector("[data-analytics-mask] input")!);
+    expect((await flushed()).some((e) => e.type === "form")).toBe(false);
+  });
+
+  it("names a field by its name or id, and one named like a card or password by its kind", () => {
+    document.body.innerHTML = `<input name="cc-number"><input id="phone" type="tel"><textarea name="message"></textarea><input>`;
+    expect([...document.querySelectorAll("input, textarea")].map((el) => fieldOf(el))).toEqual([
+      { field: "(text)", kind: "text" },
+      { field: "phone", kind: "tel" },
+      { field: "message", kind: "textarea" },
+      { field: "(text)", kind: "text" },
+    ]);
+  });
+});
+
+describe("heatmaps and replays", () => {
+  it("records nothing on a page Analytics opened in its frame, and loads the overlay instead", async () => {
+    history.replaceState(null, "", "/pricing#openasy-heatmap");
+    const parent = { postMessage() {} };
+    const real = Object.getOwnPropertyDescriptor(window, "parent")!;
+    Object.defineProperty(window, "parent", { configurable: true, value: parent });
+    try {
+      const api = start({ ...config, heatmap: "https://analytics.example/s/heatmap.js" }, stop.signal);
+      api.track("anything");
+      expect(await flushed()).toEqual([]);
+      expect(document.querySelector('script[src="https://analytics.example/s/heatmap.js"]')).not.toBeNull();
+      expect(localStorage.length).toBe(0);
+    } finally {
+      Object.defineProperty(window, "parent", real);
+      document.head.innerHTML = "";
+    }
+  });
+
+  it("loads the recorder for the share of visits a site records, decided once a visit", async () => {
+    const replay = { sample: 50, script: "https://analytics.example/s/replay.js", endpoint: "https://analytics.example/api/v1/replay" };
+    const random = vi.spyOn(Math, "random").mockReturnValue(0.2);
+    start({ ...config, replay }, stop.signal);
+    expect(document.querySelector(`script[src="${replay.script}"]`)).not.toBeNull();
+    expect(sessionStorage.getItem("openasy.replay")).toMatch(/:1$/);
+    document.head.innerHTML = "";
+    stop.abort();
+    stop = new AbortController();
+    // The same visit keeps its pick even if the dice say otherwise now.
+    random.mockReturnValue(0.9);
+    start({ ...config, replay }, stop.signal);
+    expect(document.querySelector(`script[src="${replay.script}"]`)).not.toBeNull();
+    document.head.innerHTML = "";
+    sessionStorage.clear();
+    stop.abort();
+    stop = new AbortController();
+    start({ ...config, replay }, stop.signal);
+    expect(document.querySelector(`script[src="${replay.script}"]`)).toBeNull();
+    random.mockRestore();
+  });
+
+  it("does not record on a site that asks first until consent is given", () => {
+    const replay = { sample: 100, script: "https://analytics.example/s/replay.js", endpoint: "https://analytics.example/api/v1/replay" };
+    const api = start({ ...config, consent: "required", replay }, stop.signal);
+    expect(document.querySelector("script[src]")).toBeNull();
+    api.consent(true);
+    expect(document.querySelector(`script[src="${replay.script}"]`)).not.toBeNull();
+    document.head.innerHTML = "";
+  });
+
+  it("puts each click where its element is on the page now", () => {
+    document.body.innerHTML = `<a class="btn">Start</a>`;
+    const a = document.querySelector("a")!;
+    a.getBoundingClientRect = () => ({ left: 100, top: 200, width: 80, height: 20, right: 180, bottom: 220, x: 100, y: 200, toJSON() {} }) as DOMRect;
+    expect(
+      place([
+        { target: "a.btn", x: 500, y: 500, count: 3 },
+        { target: "button#gone", x: 0, y: 0, count: 9 },
+        { target: "::not a selector", x: 0, y: 0, count: 1 },
+      ]),
+    ).toEqual([{ left: 140, top: 210, count: 3 }]);
   });
 });
 

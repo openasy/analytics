@@ -2,6 +2,7 @@
 import { createServer, type RequestListener, type Server } from "node:http";
 import { createAuth } from "@openasy/auth";
 import type { AddressInfo } from "node:net";
+import { gzipSync } from "node:zlib";
 import { createAnalytics, type AnalyticsOptions } from "./analytics.ts";
 import { createApp, type AppOptions } from "./app.ts";
 import { parseConfig } from "./config.ts";
@@ -23,6 +24,14 @@ sites:
     goals:
       - { name: Bought, path: /checkout/done }
       - { name: Signed up, event: signup }
+    funnels:
+      - name: Trial
+        steps:
+          - { name: Pricing, path: /pricing }
+          - { name: Sign-up form, path: /signup }
+          - { name: Signed up, event: signup }
+    forms: true
+    replays: { sample: 10%, keep: 30d }
   - name: blog
     domains: [https://blog.example]
     consent: required
@@ -49,7 +58,17 @@ export async function startApp(opts: Partial<AppOptions> & { version: string; si
   await new Promise<void>((resolve) => server.listen(0, resolve));
   const base = `http://localhost:${(server.address() as AddressInfo).port}`;
   const auth = createAuth({ db, product: "analytics", productName: "OpenAsy Analytics", origin: base });
-  handler = createApp({ db, analytics, auth, adminToken: ADMIN_TOKEN, publicUrl: base, tracker: "var OAT={start:function(){}};", ...rest });
+  handler = createApp({
+    db,
+    analytics,
+    auth,
+    adminToken: ADMIN_TOKEN,
+    publicUrl: base,
+    tracker: "var OAT={start:function(){}};",
+    replayScript: "/* replay */",
+    heatmapScript: "/* heatmap */",
+    ...rest,
+  });
   const admin = (path: string, init: RequestInit = {}) =>
     fetch(base + path, { ...init, headers: { authorization: `Bearer ${ADMIN_TOKEN}`, "content-type": "application/json", ...init.headers } });
   /** Sends a batch the way the script on a page does: text/plain, from the page's origin. */
@@ -59,6 +78,13 @@ export async function startApp(opts: Partial<AppOptions> & { version: string; si
       body: typeof body === "string" ? body : JSON.stringify(body),
       headers: { "content-type": "text/plain;charset=UTF-8", "user-agent": ua, ...(origin && { origin }), ...headers },
     });
+  /** Sends a chunk of a replay the way replay.js does: gzipped, as text/plain, with the visit's ids in the query. */
+  const replay = (id: { visitor: string; session: string }, seq: number, events: unknown[], { origin = SHOP, site = "shop", ua = CHROME } = {}) =>
+    fetch(`${base}/api/v1/replay?${new URLSearchParams({ site, visitor: id.visitor, session: id.session, seq: String(seq) })}`, {
+      method: "POST",
+      body: gzipSync(JSON.stringify(events)),
+      headers: { "content-type": "text/plain", "user-agent": ua, ...(origin && { origin }) },
+    });
   const close = () => new Promise<void>((resolve) => server.close(() => resolve()));
-  return { db, analytics, auth, base, admin, collect, clock, close };
+  return { db, analytics, auth, base, admin, collect, replay, clock, close };
 }
