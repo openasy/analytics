@@ -1,5 +1,8 @@
 # The sites Analytics measures. This file is the only place sites are added, changed and removed; a change is
 # picked up within a minute, and a file with a mistake leaves the last good one in place.
+# trustedProxies: [10.0.0.0/8]   # proxies whose X-Forwarded-For is believed, for the visitors' places
+# geoip: { database: /data/geoip/dbip-city-lite.mmdb, update: monthly }   # or geoip: off
+# smtp: { host: mail.example.com, port: 587, security: starttls, user: analytics@example.com, from: "Analytics <analytics@example.com>", timeZone: Europe/Istanbul }   # for email reports and alerts; the password is ANALYTICS_SMTP_PASSWORD
 sites:
   - name: shop
     domains: [https://www.example.com, https://example.com]
@@ -10,4 +13,12 @@ sites:
     goals:
       - { name: Bought, path: /checkout/done }
       - { name: Signed up, event: signup }
+    search: { path: /search, param: q } # what people search on the site, masked
+    # notFound: { title: Page not found }   # or <meta name="analytics" content="404"> on the page
+    # channels: { email: [partner-newsletter] }   # your own sources in a channel
+    # vitals: true   # Core Web Vitals of each page
+    # location: city   # city, region, country or off; the IP address is never kept
     # serverKey: ANALYTICS_SHOP_KEY   # the variable that holds the key for events from your servers
+    # currency: TRY   # orders and goal values are in it
+    # ecommerce: true   # openasy.ecommerce() calls: product views, carts, checkouts, orders and refunds
+    # searchConsole: { google: "sc-domain:example.com", bing: "https://www.example.com/", yandex: "https:www.example.com:443" }   # keys in the environment

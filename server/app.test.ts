@@ -23,7 +23,7 @@ describe("the script", () => {
     expect(res.headers.get("cache-control")).toBe("public, max-age=300");
     const text = await res.text();
     expect(text).toContain(
-      `OAT.start({"site":"shop","endpoint":"${app.base}/api/v1/collect","consent":"none","forms":true,"replay":{"sample":10,"script":"${app.base}/s/replay.js","endpoint":"${app.base}/api/v1/replay"},"heatmap":"${app.base}/s/heatmap.js"});`,
+      `OAT.start({"site":"shop","endpoint":"${app.base}/api/v1/collect","consent":"none","forms":true,"vitals":false,"ecommerce":true,"replay":{"sample":10,"script":"${app.base}/s/replay.js","endpoint":"${app.base}/api/v1/replay"},"heatmap":"${app.base}/s/heatmap.js"});`,
     );
     expect(await (await fetch(`${app.base}/s/replay.js`)).text()).toBe("/* replay */");
     expect(await (await fetch(`${app.base}/s/heatmap.js`)).text()).toBe("/* heatmap */");
@@ -71,7 +71,7 @@ describe("collecting", () => {
   it("refuses what is not a batch, with what to fix", async () => {
     const bad = await app.collect({ site: "shop", ...ids(), events: [{ type: "pageview", url: `${SHOP}/`, value: "hunter2" }] });
     expect(bad.status).toBe(422);
-    expect((await json(bad)).detail).toMatch(/value is not part of an event/);
+    expect((await json(bad)).detail).toMatch(/value is part of an ecommerce event only/);
     expect((await app.collect("{nope")).status).toBe(400);
     expect((await app.collect({ site: "shop", ...ids(), events: [view("/")], pad: "x".repeat(70_000) })).status).toBe(413);
     const gz = await fetch(`${app.base}/api/v1/collect`, {
@@ -171,7 +171,18 @@ describe("reports", () => {
       "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
     );
     const r = await json(await fresh.admin("/api/v1/report?site=shop&days=7"));
-    expect(r.totals).toEqual({ visitors: 2, visits: 3, pageviews: 4, bounceRate: 2 / 3, duration: 40 });
+    // Engaged as GA4 counts it: session-a-1 viewed two pages, session-b-1 lasted a minute; session-a-2 bounced.
+    expect(r.totals).toEqual({
+      visitors: 2,
+      visits: 3,
+      pageviews: 4,
+      bounceRate: 1 / 3,
+      duration: 40,
+      engagedVisits: 2,
+      engagementRate: 2 / 3,
+      newVisitors: 2,
+      returningVisitors: 1,
+    });
     expect(r.series).toHaveLength(7);
     expect(r.series[6]).toEqual({ day: "2026-10-22", visitors: 2, visits: 3, pageviews: 4 });
     expect(r.pages[0]).toEqual({ path: "/", title: "/", views: 2, visitors: 1, time: null, scroll: null });
@@ -188,8 +199,8 @@ describe("reports", () => {
     expect(r.events).toEqual([{ name: "signup", count: 1, visitors: 1 }]);
     expect(r.clicks).toEqual([{ target: "button.buy", text: "Buy", href: null, count: 1, visitors: 1 }]);
     expect(r.goals).toEqual([
-      { name: "Bought", path: "/checkout/done", event: null, visits: 1, rate: 1 / 3 },
-      { name: "Signed up", path: null, event: "signup", visits: 1, rate: 1 / 3 },
+      { name: "Bought", path: "/checkout/done", event: null, download: null, visits: 1, rate: 1 / 3, value: null },
+      { name: "Signed up", path: null, event: "signup", download: null, visits: 1, rate: 1 / 3, value: null },
     ]);
 
     const summary = await json(await fresh.admin("/api/v1/summary"));

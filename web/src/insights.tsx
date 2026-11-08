@@ -1,4 +1,5 @@
-// Funnels, forms, heatmaps and replays: the pages that show how people move through a site, not only what they saw.
+// Heatmaps and replays: the pages that show how people move through a page, not only what they saw. Both follow the
+// filter bar: a replay list of the visits it keeps, a heatmap of their clicks.
 import {
   Badge,
   Button,
@@ -16,203 +17,11 @@ import {
 } from "@openasy/ui";
 import { Clock, Eye, MousePointerClick, Pause, Play } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Forms, Funnels, Heatmap, Recording, Site, Visit } from "./api.ts";
-import { Code, duration, percent, ReportHeader, time, type Call, type Choice } from "./common.tsx";
+import type { Heatmap, Recording, Visit } from "./api.ts";
+import { Code, duration, percent, time } from "./common.tsx";
+import { useFormat } from "./format.ts";
 import { useT } from "./i18n.ts";
-
-const query = (choice: Choice, extra: Record<string, string> = {}) => new URLSearchParams({ site: choice.site, days: String(choice.range), ...extra });
-
-/** Loads one report of the chosen site and period: undefined while loading, null when it failed. */
-function useLoad<R>(call: Call, path: string | null) {
-  const [data, setData] = useState<R | null>();
-  useEffect(() => {
-    if (!path) return;
-    let live = true;
-    setData(undefined);
-    void call<R>(path).then(
-      (r) => live && setData(r),
-      () => live && setData(null),
-    );
-    return () => {
-      live = false;
-    };
-  }, [call, path]);
-  return data;
-}
-
-function Failed() {
-  const t = useT();
-  return <EmptyState title={t("report.failed")} />;
-}
-
-// ---------------------------------------------------------------- Funnels
-
-const FUNNEL_EXAMPLE = `    funnels:
-      - name: Trial
-        steps:
-          - { name: Pricing, path: /pricing }
-          - { name: Sign-up form, path: /signup }
-          - { name: Signed up, event: signup }`;
-
-export function FunnelsPage({ call, sites, choice }: { call: Call; sites: Site[]; choice: Choice }) {
-  const t = useT();
-  const r = useLoad<Funnels>(call, choice.site ? `/api/v1/funnels?${query(choice)}` : null);
-  return (
-    <>
-      <ReportHeader title={t("funnels.title")} description={t("funnels.description")} sites={sites} choice={choice} />
-      {r === null && <Failed />}
-      {r && !r.funnels.length && (
-        <EmptyState title={t("funnels.none")}>
-          <span className="flex flex-col gap-2">
-            {t("funnels.noneDetail")}
-            <Code>{FUNNEL_EXAMPLE}</Code>
-          </span>
-        </EmptyState>
-      )}
-      {r?.funnels.map((f) => {
-        const first = f.steps[0]?.visits ?? 0;
-        const last = f.steps[f.steps.length - 1]?.visits ?? 0;
-        return (
-          <Panel
-            key={f.name}
-            title={f.name}
-            description={first ? t("funnels.converted", { rate: percent(last / first), finished: last, entered: first }) : t("funnels.nobody")}
-          >
-            <div className="flex flex-col gap-4">
-              <ol className="analytics-list flex flex-col gap-3" aria-label={f.name}>
-                {f.steps.map((s, i) => (
-                  <li key={i} className="flex flex-col gap-1">
-                    <span className="flex items-baseline justify-between gap-3 text-sm">
-                      <span className="min-w-0">
-                        <span className="font-medium">
-                          {i + 1}. {s.name}
-                        </span>{" "}
-                        <span className="analytics-wrap font-mono text-xs text-fg-muted">{s.path ?? t("behavior.event", { name: s.event ?? "" })}</span>
-                      </span>
-                      <span className="shrink-0 font-mono text-xs tabular-nums">{first ? `${s.visits} · ${percent(s.visits / first)}` : s.visits}</span>
-                    </span>
-                    <span className="block h-2 w-full overflow-hidden rounded-full bg-subtle">
-                      <span className="block h-2 rounded-full bg-accent" style={{ width: `${first ? (s.visits / first) * 100 : 0}%` }} />
-                    </span>
-                    {s.median !== null && <span className="text-xs text-fg-muted">{t("funnels.wait", { time: duration(s.median) })}</span>}
-                  </li>
-                ))}
-              </ol>
-              {f.sources.length > 0 && (
-                <DataTable
-                  label={t("funnels.bySource")}
-                  columns={[
-                    { id: "source", header: t("funnels.source"), cell: (s) => s.source },
-                    { id: "entered", header: t("funnels.entered"), align: "right", sortValue: (s) => s.entered, cell: (s) => s.entered },
-                    { id: "finished", header: t("funnels.finished"), align: "right", sortValue: (s) => s.finished, cell: (s) => s.finished },
-                    {
-                      id: "rate",
-                      header: t("funnels.rate"),
-                      align: "right",
-                      sortValue: (s) => s.finished / Math.max(1, s.entered),
-                      cell: (s) => percent(s.finished / Math.max(1, s.entered)),
-                    },
-                  ]}
-                  rows={f.sources}
-                  getRowId={(s) => s.source}
-                  minWidth={480}
-                />
-              )}
-            </div>
-          </Panel>
-        );
-      })}
-    </>
-  );
-}
-
-// ---------------------------------------------------------------- Forms
-
-export function FormsPage({ call, sites, choice }: { call: Call; sites: Site[]; choice: Choice }) {
-  const t = useT();
-  const r = useLoad<Forms>(call, choice.site ? `/api/v1/forms?${query(choice)}` : null);
-  const [picked, setPicked] = useState<string>();
-  const form = r?.forms.find((f) => f.form === picked) ?? r?.forms[0];
-  type Row = Forms["forms"][number];
-  type Field = Row["fields"][number];
-  const columns: Column<Row>[] = [
-    {
-      id: "form",
-      header: t("forms.form"),
-      cell: (f) => (
-        <button type="button" className="flex min-w-0 cursor-pointer flex-col border-0 bg-transparent p-0 text-left" onClick={() => setPicked(f.form)}>
-          <span className={`analytics-wrap font-mono text-xs ${f === form ? "font-semibold text-fg" : "text-accent"}`}>{f.form}</span>
-          {f.page && <span className="analytics-wrap font-mono text-xs text-fg-muted">{f.page}</span>}
-        </button>
-      ),
-    },
-    { id: "starts", header: t("forms.starts"), align: "right", sortValue: (f) => f.starts, cell: (f) => f.starts },
-    { id: "submits", header: t("forms.submits"), align: "right", sortValue: (f) => f.submits, cell: (f) => f.submits },
-    {
-      id: "rate",
-      header: t("forms.rate"),
-      align: "right",
-      sortValue: (f) => f.submits / Math.max(1, f.starts),
-      cell: (f) => percent(f.submits / Math.max(1, f.starts)),
-    },
-    { id: "time", header: t("forms.time"), align: "right", sortValue: (f) => f.median ?? -1, cell: (f) => duration(f.median) },
-  ];
-  const fields: Column<Field>[] = [
-    {
-      id: "field",
-      header: t("forms.field"),
-      cell: (x) => (
-        <span className="flex items-center gap-1.5">
-          <span className="analytics-wrap font-mono text-xs">{x.field}</span>
-          {x.kind && <Badge>{x.kind}</Badge>}
-        </span>
-      ),
-    },
-    { id: "reached", header: t("forms.reached"), align: "right", sortValue: (x) => x.reached, cell: (x) => x.reached },
-    {
-      id: "left",
-      header: t("forms.left"),
-      align: "right",
-      sortValue: (x) => x.left,
-      cell: (x) => (x.left ? <span className="text-warning">{x.left}</span> : 0),
-    },
-    { id: "time", header: t("forms.fieldTime"), align: "right", sortValue: (x) => x.time ?? -1, cell: (x) => duration(x.time) },
-    { id: "again", header: t("forms.again"), align: "right", sortValue: (x) => x.again, cell: (x) => percent(x.again) },
-  ];
-  return (
-    <>
-      <ReportHeader title={t("forms.title")} description={t("forms.description")} sites={sites} choice={choice} />
-      {r === null && <Failed />}
-      {r && !r.enabled && !r.forms.length ? (
-        <EmptyState title={t("forms.off")}>
-          <span className="flex flex-col gap-2">
-            {t("forms.offDetail")}
-            <Code>{"    forms: true"}</Code>
-          </span>
-        </EmptyState>
-      ) : (
-        <>
-          <Panel flush>
-            <DataTable
-              label={t("forms.title")}
-              columns={columns}
-              rows={r?.forms ?? []}
-              loading={r === undefined}
-              getRowId={(f) => f.form}
-              minWidth={640}
-              empty={<EmptyState title={t("forms.none")}>{t("forms.noneDetail")}</EmptyState>}
-            />
-          </Panel>
-          {form && (
-            <Panel title={t("forms.fields", { form: form.form })} description={t("forms.fieldsDetail")} flush>
-              <DataTable label={t("forms.fields", { form: form.form })} columns={fields} rows={form.fields} getRowId={(x) => x.field} minWidth={560} />
-            </Panel>
-          )}
-        </>
-      )}
-    </>
-  );
-}
+import { Failed, Report, useLoad, useReport } from "./report.tsx";
 
 // ---------------------------------------------------------------- Heatmaps
 
@@ -220,12 +29,13 @@ export function FormsPage({ call, sites, choice }: { call: Call; sites: Site[]; 
 const WIDTHS: Record<string, number> = { desktop: 1280, tablet: 820, mobile: 390 };
 const MAX_FRAME = 16_000;
 
-export function HeatmapsPage({ call, sites, choice }: { call: Call; sites: Site[]; choice: Choice }) {
+export function HeatmapsPage() {
   const t = useT();
+  const report = useReport();
   const [path, setPath] = useState("/");
   const [mode, setMode] = useState<"clicks" | "scroll">("clicks");
   const [device, setDevice] = useState("desktop");
-  const r = useLoad<Heatmap>(call, choice.site ? `/api/v1/heatmap?${query(choice, { path, device })}` : null);
+  const r = useLoad<Heatmap>(report.site ? `/api/v1/heatmap?${report.query({ path, device }, { compare: false })}` : null);
   const frame = useRef<HTMLIFrameElement>(null);
   const [ready, setReady] = useState(false);
   const [height, setHeight] = useState(800);
@@ -261,8 +71,7 @@ export function HeatmapsPage({ call, sites, choice }: { call: Call; sites: Site[
   const width = WIDTHS[device] ?? 1280;
   const pages = r?.pages.length ? r.pages : [{ path, views: 0 }];
   return (
-    <>
-      <ReportHeader title={t("heatmaps.title")} description={t("heatmaps.description")} sites={sites} choice={choice} />
+    <Report title={t("heatmaps.title")} description={t("heatmaps.description")} noCompare>
       <div className="flex flex-wrap items-center gap-2">
         <SelectField
           aria-label={t("heatmaps.page")}
@@ -329,7 +138,7 @@ export function HeatmapsPage({ call, sites, choice }: { call: Call; sites: Site[
             columns={[
               {
                 id: "element",
-                header: t("behavior.element"),
+                header: t("table.element"),
                 cell: (e) => (
                   <span className="flex min-w-0 flex-col">
                     <span className="analytics-clamp">{e.text ?? "–"}</span>
@@ -337,8 +146,8 @@ export function HeatmapsPage({ call, sites, choice }: { call: Call; sites: Site[
                   </span>
                 ),
               },
-              { id: "count", header: t("behavior.count"), align: "right", sortValue: (e) => e.count, cell: (e) => e.count },
-              { id: "visitors", header: t("behavior.visitors"), align: "right", sortValue: (e) => e.visitors, cell: (e) => e.visitors },
+              { id: "count", header: t("table.clicks"), align: "right", sortValue: (e) => e.count, cell: (e) => e.count },
+              { id: "visitors", header: t("table.visitors"), align: "right", sortValue: (e) => e.visitors, cell: (e) => e.visitors },
             ]}
             rows={r.elements}
             getRowId={(e) => e.target}
@@ -347,33 +156,34 @@ export function HeatmapsPage({ call, sites, choice }: { call: Call; sites: Site[
           />
         </Panel>
       )}
-    </>
+    </Report>
   );
 }
 
 // ---------------------------------------------------------------- Replays
 
-export function ReplaysPage({ call, sites, choice }: { call: Call; sites: Site[]; choice: Choice }) {
+export function ReplaysPage() {
   const t = useT();
+  const f = useFormat();
   const ago = useAgo();
+  const report = useReport();
+  const { call, query } = report;
   const [rows, setRows] = useState<Visit[]>();
   const [more, setMore] = useState<string>();
-  const site = sites.find((s) => s.name === choice.site);
+  const site = report.current;
   const load = useCallback(
     (cursor?: string) =>
-      call<{ replays: Visit[]; nextCursor?: string }>(
-        `/api/v1/replays?${new URLSearchParams({ site: choice.site, days: String(choice.range), limit: "100", ...(cursor && { cursor }) })}`,
-      ),
-    [call, choice.site, choice.range],
+      call<{ replays: Visit[]; nextCursor?: string }>(`/api/v1/replays?${query({ limit: "100", ...(cursor && { cursor }) }, { compare: false })}`),
+    [call, query],
   );
   useEffect(() => {
-    if (!choice.site) return;
+    if (!report.site) return;
     setRows(undefined);
     void load().then(
       (r) => (setRows(r.replays), setMore(r.nextCursor)),
       () => setRows([]),
     );
-  }, [load, choice.site]);
+  }, [load, report.site]);
   const columns: Column<Visit>[] = [
     {
       id: "when",
@@ -399,16 +209,15 @@ export function ReplaysPage({ call, sites, choice }: { call: Call; sites: Site[]
       sortValue: (v) => v.rage,
       cell: (v) => (v.rage ? <Badge tone="warning">{v.rage}</Badge> : 0),
     },
-    { id: "device", header: t("visits.device"), cell: (v) => <span className="text-xs">{`${v.browser}, ${v.os}`}</span> },
+    { id: "device", header: t("visits.device"), cell: (v) => <span className="text-xs">{`${f.device(v.device)} · ${v.browser}, ${v.os}`}</span> },
+    { id: "source", header: t("visits.source"), cell: (v) => <span className="text-xs">{f.source(v.source)}</span> },
   ];
   return (
-    <>
-      <ReportHeader
-        title={t("replays.title")}
-        description={site?.replays ? t("replays.description", { sample: site.replays.sample, keep: site.replays.keep }) : t("replays.descriptionOff")}
-        sites={sites}
-        choice={choice}
-      />
+    <Report
+      noCompare
+      title={t("replays.title")}
+      description={site?.replays ? t("replays.description", { sample: site.replays.sample, keep: site.replays.keep }) : t("replays.descriptionOff")}
+    >
       {site && !site.replays && !rows?.length ? (
         <EmptyState title={t("replays.off")}>
           <span className="flex flex-col gap-2">
@@ -435,11 +244,11 @@ export function ReplaysPage({ call, sites, choice }: { call: Call; sites: Site[]
             getRowId={(v) => v.id}
             minWidth={760}
             pageSize={50}
-            empty={<EmptyState title={t("replays.none")}>{t("replays.noneDetail")}</EmptyState>}
+            empty={<EmptyState title={t("replays.none")}>{report.active.length ? t("replays.noneFiltered") : t("replays.noneDetail")}</EmptyState>}
           />
         </Panel>
       )}
-    </>
+    </Report>
   );
 }
 
@@ -450,9 +259,10 @@ const clock = (ms: number) => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 };
 
-export function ReplayPage({ call, id, choice }: { call: Call; id: string; choice: Choice }) {
+export function ReplayPage({ id }: { id: string }) {
   const t = useT();
-  const r = useLoad<Recording>(call, choice.site ? `/api/v1/replays/${encodeURIComponent(id)}?site=${encodeURIComponent(choice.site)}` : null);
+  const { site } = useReport();
+  const r = useLoad<Recording>(site ? `/api/v1/replays/${encodeURIComponent(id)}?site=${encodeURIComponent(site)}` : null);
   const box = useRef<HTMLDivElement>(null);
   const stage = useRef<HTMLDivElement>(null);
   const player = useRef<Player | null>(null);
@@ -569,7 +379,7 @@ export function ReplayPage({ call, id, choice }: { call: Call; id: string; choic
               <input
                 type="range"
                 aria-label={t("replay.position")}
-                className="min-w-40 flex-1"
+                className="analytics-range flex-1"
                 min={0}
                 max={Math.max(1, total)}
                 step={100}

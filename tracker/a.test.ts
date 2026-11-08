@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fieldOf, randomId, selectorOf, start, textOf, type Config } from "./a.ts";
+import { fieldOf, randomId, selectorOf, start, textOf, vitals, type Config } from "./a.ts";
 import { place } from "./heatmap.ts";
 
 const config: Config = { site: "shop", endpoint: "https://analytics.example/api/v1/collect", consent: "none" };
@@ -258,5 +258,180 @@ describe("what a click says", () => {
     const button = document.querySelector("button")!;
     expect(selectorOf(button)).toBe("section.hero > div.cta.big > button");
     expect(textOf(button)).toBe("Start free trial");
+  });
+});
+
+describe("what a page view says about the browser", () => {
+  it("sends the browser's language, time zone and screen size, never the user agent", async () => {
+    start(config, stop.signal);
+    const [view] = await flushed();
+    expect(view).toMatchObject({ type: "pageview", language: navigator.language, screen: `${screen.width}x${screen.height}` });
+    expect(view!.timezone).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    expect(JSON.stringify(sent)).not.toContain(navigator.userAgent);
+  });
+});
+
+describe("pages not found", () => {
+  it("marks a page the site marks with a meta tag", async () => {
+    document.head.innerHTML = `<meta name="analytics" content="404">`;
+    try {
+      start(config, stop.signal);
+      expect((await flushed())[0]).toMatchObject({ type: "pageview", notFound: true });
+    } finally {
+      document.head.innerHTML = "";
+    }
+  });
+
+  it("marks the page with openasy.notFound(), on its page view or, once that was sent, on its leave", async () => {
+    // A click on a link sends what is waiting at once.
+    document.body.innerHTML = `<a id="send" href="/elsewhere">Send</a>`;
+    document.querySelector("#send")!.addEventListener("click", (e) => e.preventDefault());
+    const api = start(config, stop.signal);
+    api.notFound();
+    history.pushState(null, "", "/missing");
+    (document.querySelector("#send") as HTMLElement).click();
+    api.notFound();
+    history.pushState(null, "", "/home");
+    const events = (await flushed()).filter((e) => e.type !== "click");
+    expect(events.map((e) => [e.type, e.url, e.notFound ?? false])).toEqual([
+      ["pageview", "http://localhost:3000/", true],
+      ["leave", "http://localhost:3000/", true],
+      ["pageview", "http://localhost:3000/missing", false],
+      ["leave", "http://localhost:3000/missing", true],
+      ["pageview", "http://localhost:3000/home", false],
+    ]);
+  });
+});
+
+describe("site search and ecommerce", () => {
+  it("marks a search page that found nothing, by its meta tag or openasy.noResults()", async () => {
+    document.head.innerHTML = `<meta name="analytics" content="no-results">`;
+    try {
+      const api = start(config, stop.signal);
+      history.pushState(null, "", "/search?q=x");
+      api.noResults();
+      const events = await flushed();
+      expect(events.filter((e) => e.type === "pageview").map((e) => e.noResults)).toEqual([true, true]);
+    } finally {
+      document.head.innerHTML = "";
+    }
+  });
+
+  it("sends ecommerce calls on a site with ecommerce: true, and only their order, value, currency and products", async () => {
+    const api = start({ ...config, ecommerce: true }, stop.signal);
+    const items = [{ sku: "ESP-1000", name: "Espresso beans", price: 920, quantity: 2 }];
+    api.ecommerce("purchase", { order: "A-1001", value: 1840, currency: "TRY", items, buyer: "Ayşe" } as never);
+    const e = (await flushed()).find((x) => x.type === "event")!;
+    expect(e).toEqual({
+      type: "event",
+      at: expect.any(Number),
+      url: "http://localhost:3000/",
+      name: "purchase",
+      order: "A-1001",
+      value: 1840,
+      currency: "TRY",
+      items,
+    });
+  });
+
+  it("sends no ecommerce call on another site", async () => {
+    start(config, stop.signal).ecommerce("add_to_cart", { items: [{ sku: "X" }] });
+    expect((await flushed()).some((x) => x.type === "event")).toBe(false);
+  });
+});
+
+describe("dead clicks and links", () => {
+  it("marks a click after which nothing changed, and not one that changed the page", async () => {
+    document.body.innerHTML = `<button id="nothing">Save</button><button id="opens">Menu</button><div id="card" style="cursor: pointer">Card</div><p id="plain">Text</p>`;
+    document.querySelector("#opens")!.addEventListener("click", () => document.body.append(document.createElement("ul")));
+    start(config, stop.signal);
+    for (const sel of ["#nothing", "#opens", "#card", "#plain"]) {
+      (document.querySelector(sel) as HTMLElement).click();
+      // The page's own reaction to a click is seen before a second has passed.
+      await Promise.resolve();
+      vi.advanceTimersByTime(1000);
+    }
+    const clicks = (await flushed()).filter((e) => e.type === "click");
+    expect(clicks.map((e) => [e.target, e.dead ?? false])).toEqual([
+      ["button#nothing", true],
+      ["button#opens", false],
+      ["div#card", true],
+    ]);
+  });
+
+  it("sends a dead click again marked when the first was already sent, with the same time", async () => {
+    document.body.innerHTML = `<button id="nothing">Save</button>`;
+    start(config, stop.signal);
+    (document.querySelector("#nothing") as HTMLElement).click();
+    vi.advanceTimersByTime(0);
+    // Sent before the second was up, as when the visitor leaves the tab.
+    window.dispatchEvent(new Event("pagehide"));
+    const clicks = (await flushed()).filter((e) => e.type === "click");
+    expect(clicks).toHaveLength(2);
+    expect(clicks[1]).toMatchObject({ target: "button#nothing", dead: true, at: clicks[0]!.at });
+  });
+
+  it("records a middle click on a link, which opens it in a new tab", async () => {
+    document.body.innerHTML = `<a id="out" href="https://elsewhere.example/doc.pdf">Report</a>`;
+    start(config, stop.signal);
+    document.querySelector("#out")!.dispatchEvent(new MouseEvent("auxclick", { bubbles: true, button: 1 }));
+    document.querySelector("#out")!.dispatchEvent(new MouseEvent("auxclick", { bubbles: true, button: 2 }));
+    const clicks = (await flushed()).filter((e) => e.type === "click");
+    expect(clicks).toMatchObject([{ target: "a#out", href: "https://elsewhere.example/doc.pdf" }]);
+    expect(clicks[0]!.dead).toBeUndefined();
+  });
+});
+
+describe("Core Web Vitals", () => {
+  type Entry = Record<string, unknown>;
+  let observers: Map<string, (entries: Entry[]) => void>;
+  beforeEach(() => {
+    observers = new Map();
+    class FakeObserver {
+      static supportedEntryTypes = ["largest-contentful-paint", "layout-shift", "event", "first-input"];
+      constructor(private cb: (list: { getEntries(): Entry[] }) => void) {}
+      observe({ type }: { type: string }) {
+        observers.set(type, (entries) => this.cb({ getEntries: () => entries }));
+      }
+    }
+    vi.stubGlobal("PerformanceObserver", FakeObserver);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("measures LCP, the worst burst of layout shifts, and the slowest interaction, once a page", () => {
+    const v = vitals();
+    observers.get("largest-contentful-paint")!([{ startTime: 1200 }, { startTime: 2400.4 }]);
+    observers.get("layout-shift")!([
+      { startTime: 100, value: 0.05, hadRecentInput: false },
+      { startTime: 600, value: 0.04, hadRecentInput: false },
+      // A shift right after input is the visitor's doing, not the page's.
+      { startTime: 700, value: 0.5, hadRecentInput: true },
+      { startTime: 9000, value: 0.02, hadRecentInput: false },
+    ]);
+    observers.get("event")!([
+      { interactionId: 1, duration: 80 },
+      { interactionId: 1, duration: 120 },
+      { interactionId: 2, duration: 300 },
+      { interactionId: 0, duration: 900 },
+    ]);
+    expect(v.take()).toEqual({ lcp: 2400, inp: 300, cls: 0.09 });
+    // The next page of a single-page app has no LCP of its own, and starts CLS and INP again.
+    expect(v.take()).toEqual({ cls: 0 });
+  });
+
+  it("sends the vitals with the page's leave, on a site with vitals: true", async () => {
+    start({ ...config, vitals: true }, stop.signal);
+    observers.get("largest-contentful-paint")!([{ startTime: 1800 }]);
+    window.dispatchEvent(new Event("pagehide"));
+    const leave = (await flushed()).find((e) => e.type === "leave");
+    expect(leave).toMatchObject({ lcp: 1800, cls: 0 });
+  });
+
+  it("measures nothing on a site without vitals", async () => {
+    start(config, stop.signal);
+    expect(observers.size).toBe(0);
+    window.dispatchEvent(new Event("pagehide"));
+    const leave = (await flushed()).find((e) => e.type === "leave");
+    expect(leave?.lcp).toBeUndefined();
   });
 });

@@ -8,7 +8,21 @@ import { AuthError, identityOrigin, mergeOpenApi, sendProblem, type Auth, type R
 import { log } from "./log.ts";
 import { countRequest, renderMetrics } from "./metrics.ts";
 import type { ProductLink } from "./products.ts";
-import { AnalyticsError, CHUNK_LIMIT, parseLimit, parseRange, type Analytics, type ProblemCode } from "./analytics.ts";
+import {
+  AnalyticsError,
+  BREAKDOWNS,
+  CHUNK_LIMIT,
+  parseLimit,
+  parseRange,
+  type Analytics,
+  type Breakdown,
+  type ProblemCode,
+  type ReportQuery,
+} from "./analytics.ts";
+import { clientIp } from "./geo.ts";
+import { parseCompare, parseFilters, QueryError } from "./query.ts";
+import { ENGINES, type EngineId } from "./searchconsole.ts";
+import type { Sharing, Who } from "./sharing.ts";
 
 export interface AppOptions {
   db: DatabaseSync;
@@ -35,6 +49,10 @@ export interface AppOptions {
   serveMetrics?: boolean;
   /** The install's OpenAsy products and their addresses, from OPENASY_PRODUCTS, for the product switcher. */
   products?: ProductLink[];
+  /** Proxies whose X-Forwarded-For is believed, from ANALYTICS_TRUSTED_PROXIES; the sites file can add more. */
+  trustedProxies?: string[];
+  /** Segments, email reports, shared links and alerts. */
+  sharing: Sharing;
 }
 
 function metricsText(analytics: Analytics, version: string) {
@@ -139,6 +157,16 @@ async function readBody(req: IncomingMessage, limit: number): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
+/** A small JSON body, such as an annotation. */
+async function readJson(req: IncomingMessage): Promise<unknown> {
+  const raw = await readBody(req, 16 * 1024);
+  try {
+    return JSON.parse(raw.toString("utf8"));
+  } catch {
+    throw new AnalyticsError(400, "invalid-json", "The body must be a JSON object.");
+  }
+}
+
 function tokenMatches(header: string | undefined, expected: string | undefined): boolean {
   if (!expected || !header?.startsWith("Bearer ")) return false;
   const a = Buffer.from(header.slice(7));
@@ -153,6 +181,10 @@ interface Ctx {
   res: ServerResponse;
   url: URL;
   params: string[];
+  /** Who is asking: a member's name or email, or an API token's name; null for the shared test token. */
+  who: string | null;
+  /** The member or token asking, for what is theirs, such as their segments. */
+  user: Who;
 }
 interface Route {
   method: string;
@@ -186,6 +218,8 @@ export function createApp({
   openapi,
   serveMetrics = true,
   products = [],
+  trustedProxies = [],
+  sharing,
 }: AppOptions) {
   // The served description includes /api/v1/auth from @openasy/auth, so the API reference documents sign-in too.
   const spec = openapi && JSON.stringify({ ...mergeOpenApi(openapi), info: { ...(openapi.info as object), version } });
@@ -194,6 +228,48 @@ export function createApp({
   };
   const cursor = (url: URL) => url.searchParams.get("cursor") ?? undefined;
   const limit = (url: URL) => parseLimit(url.searchParams.get("limit"));
+  /** The period, filters and comparison of a report request. */
+  const reportQuery = (url: URL): ReportQuery => {
+    try {
+      return {
+        range: parseRange(url.searchParams.get("days")),
+        filters: parseFilters(url.searchParams.getAll("filter")),
+        compare: parseCompare(url.searchParams.get("compare")),
+      };
+    } catch (err) {
+      if (err instanceof QueryError) throw new AnalyticsError(422, "invalid-body", err.message);
+      throw err;
+    }
+  };
+  const filters = (url: URL) => {
+    try {
+      return parseFilters(url.searchParams.getAll("filter"));
+    } catch (err) {
+      if (err instanceof QueryError) throw new AnalyticsError(422, "invalid-body", err.message);
+      throw err;
+    }
+  };
+  const site = (url: URL) => param(url, "site", true)!;
+  /** A whole number query parameter between min and max, or its default. */
+  const int = (url: URL, name: string, min: number, max: number, fallback: number) => {
+    const v = url.searchParams.get(name);
+    if (v === null) return fallback;
+    const n = Number(v);
+    if (!Number.isInteger(n) || n < min || n > max) throw new AnalyticsError(422, "invalid-body", `${name} is a whole number from ${min} to ${max}.`);
+    return n;
+  };
+  const oneOf = <T extends string>(url: URL, name: string, values: readonly T[], fallback: T): T => {
+    const v = url.searchParams.get(name);
+    if (v === null) return fallback;
+    if (!values.includes(v as T)) throw new AnalyticsError(422, "invalid-body", `${name} is one of ${values.join(", ")}.`);
+    return v as T;
+  };
+  const pagePath = (url: URL) => {
+    const p = url.searchParams.get("page");
+    if (!p || !p.startsWith("/") || p.length > 512)
+      throw new AnalyticsError(422, "invalid-body", "page is a page's path, such as /pricing; * matches any characters.");
+    return p;
+  };
   const page = <K extends string, T>(key: K, p: { items: T[]; nextCursor?: string }) =>
     ({ [key]: p.items, ...(p.nextCursor && { nextCursor: p.nextCursor }) }) as Record<K, T[]> & { nextCursor?: string };
 
@@ -204,13 +280,40 @@ export function createApp({
 
     // The sites, as the file sets them. There is no route that adds, changes or removes one.
     { method: "GET", path: "/api/v1/sites", auth: "viewer", handle: () => ({ sites: analytics.siteList(publicUrl), file: analytics.summary().file }) },
+    { method: "GET", path: "/api/v1/settings", auth: "viewer", handle: () => analytics.settingsFile() },
 
     // Reports.
+    { method: "GET", path: "/api/v1/report", auth: "viewer", handle: ({ url }) => analytics.report(site(url), reportQuery(url)) },
     {
       method: "GET",
-      path: "/api/v1/report",
+      path: "/api/v1/breakdown",
       auth: "viewer",
-      handle: ({ url }) => analytics.report(param(url, "site", true)!, parseRange(url.searchParams.get("days"))),
+      handle: ({ url }) => {
+        const dimension = url.searchParams.get("dimension") as Breakdown | null;
+        if (!dimension || !BREAKDOWNS.includes(dimension)) throw new AnalyticsError(422, "invalid-body", `dimension is one of ${BREAKDOWNS.join(", ")}.`);
+        return analytics.breakdown(site(url), dimension, reportQuery(url), parseLimit(url.searchParams.get("limit"), 500, 50));
+      },
+    },
+    { method: "GET", path: "/api/v1/realtime", auth: "viewer", handle: ({ url }) => analytics.realtime(site(url), filters(url)) },
+    { method: "GET", path: "/api/v1/vitals", auth: "viewer", handle: ({ url }) => analytics.vitals(site(url), reportQuery(url)) },
+    { method: "GET", path: "/api/v1/frustration", auth: "viewer", handle: ({ url }) => analytics.frustration(site(url), reportQuery(url)) },
+    {
+      method: "GET",
+      path: "/api/v1/annotations",
+      auth: "viewer",
+      handle: ({ url }) => analytics.annotations(site(url), url.searchParams.has("days") ? parseRange(url.searchParams.get("days")) : undefined),
+    },
+    {
+      method: "POST",
+      path: "/api/v1/annotations",
+      auth: "editor",
+      handle: async ({ req, res, url, who }) => json(res, 201, analytics.addAnnotation(site(url), await readJson(req), who)),
+    },
+    {
+      method: "DELETE",
+      path: "/api/v1/annotations/:id",
+      auth: "editor",
+      handle: ({ res, url, params }) => (analytics.deleteAnnotation(site(url), params[0]!), noContent(res)),
     },
     {
       method: "GET",
@@ -219,7 +322,17 @@ export function createApp({
       handle: ({ url }) =>
         page(
           "visits",
-          analytics.visits({ site: param(url, "site", true)!, visitor: param(url, "visitor"), user: param(url, "user") }, cursor(url), limit(url)),
+          analytics.visits(
+            {
+              site: site(url),
+              visitor: param(url, "visitor"),
+              user: param(url, "user"),
+              range: url.searchParams.has("days") ? parseRange(url.searchParams.get("days")) : undefined,
+              filters: filters(url),
+            },
+            cursor(url),
+            limit(url),
+          ),
         ),
     },
     { method: "GET", path: "/api/v1/visits/:id", auth: "viewer", handle: ({ url, params }) => analytics.visit(param(url, "site", true)!, params[0]!) },
@@ -228,13 +341,13 @@ export function createApp({
       method: "GET",
       path: "/api/v1/funnels",
       auth: "viewer",
-      handle: ({ url }) => analytics.funnels(param(url, "site", true)!, parseRange(url.searchParams.get("days"))),
+      handle: ({ url }) => analytics.funnels(site(url), reportQuery(url)),
     },
     {
       method: "GET",
       path: "/api/v1/forms",
       auth: "viewer",
-      handle: ({ url }) => analytics.forms(param(url, "site", true)!, parseRange(url.searchParams.get("days"))),
+      handle: ({ url }) => analytics.forms(site(url), reportQuery(url)),
     },
     {
       method: "GET",
@@ -245,16 +358,147 @@ export function createApp({
         if (!path.startsWith("/") || path.length > 512) throw new AnalyticsError(422, "invalid-body", "path is a page's path, such as /pricing.");
         const device = param(url, "device");
         if (device && !["desktop", "mobile", "tablet"].includes(device)) throw new AnalyticsError(422, "invalid-body", "device is desktop, mobile or tablet.");
-        return analytics.heatmap(param(url, "site", true)!, path, parseRange(url.searchParams.get("days")), device);
+        return analytics.heatmap(site(url), path, reportQuery(url), device);
       },
     },
     {
       method: "GET",
       path: "/api/v1/replays",
       auth: "viewer",
-      handle: ({ url }) => page("replays", analytics.replays(param(url, "site", true)!, parseRange(url.searchParams.get("days")), cursor(url), limit(url))),
+      handle: ({ url }) => page("replays", analytics.replays(site(url), parseRange(url.searchParams.get("days")), cursor(url), limit(url), filters(url))),
     },
     { method: "GET", path: "/api/v1/replays/:id", auth: "viewer", handle: ({ url, params }) => analytics.recording(param(url, "site", true)!, params[0]!) },
+
+    // Ecommerce, attribution, paths, retention, site search and the search engines.
+    { method: "GET", path: "/api/v1/ecommerce", auth: "viewer", handle: ({ url }) => analytics.ecommerce(site(url), reportQuery(url)) },
+    {
+      method: "GET",
+      path: "/api/v1/attribution",
+      auth: "viewer",
+      handle: ({ url }) =>
+        analytics.attribution(
+          site(url),
+          param(url, "goal", true)!,
+          reportQuery(url),
+          int(url, "lookback", 1, 90, 30),
+          oneOf(url, "by", ["channel", "source", "campaign"] as const, "channel"),
+        ),
+    },
+    {
+      method: "GET",
+      path: "/api/v1/paths",
+      auth: "viewer",
+      handle: ({ url }) =>
+        analytics.paths(site(url), pagePath(url), oneOf(url, "direction", ["from", "to"] as const, "from"), int(url, "steps", 1, 5, 3), reportQuery(url)),
+    },
+    {
+      method: "GET",
+      path: "/api/v1/retention",
+      auth: "viewer",
+      handle: ({ url }) => analytics.retention(site(url), int(url, "weeks", 2, 26, 8), parseRange(url.searchParams.get("days") ?? "30"), filters(url)),
+    },
+    { method: "GET", path: "/api/v1/sitesearch", auth: "viewer", handle: ({ url }) => analytics.siteSearch(site(url), reportQuery(url)) },
+    {
+      method: "GET",
+      path: "/api/v1/search-console",
+      auth: "viewer",
+      handle: ({ url }) => analytics.searchConsole(site(url), oneOf<EngineId>(url, "engine", ENGINES, "google"), reportQuery(url)),
+    },
+
+    // Saved segments: a member's own, and the team's.
+    { method: "GET", path: "/api/v1/segments", auth: "viewer", handle: ({ user }) => ({ segments: sharing.segments.list(user) }) },
+    {
+      method: "POST",
+      path: "/api/v1/segments",
+      auth: "viewer",
+      handle: async ({ req, res, user }) => json(res, 201, sharing.segments.create(user, await readJson(req))),
+    },
+    {
+      method: "DELETE",
+      path: "/api/v1/segments/:id",
+      auth: "viewer",
+      handle: ({ res, params, user }) => (sharing.segments.remove(user, params[0]!), noContent(res)),
+    },
+
+    // Email reports, shared links and alerts.
+    {
+      method: "GET",
+      path: "/api/v1/email-reports",
+      auth: "viewer",
+      handle: ({ url }) => ({ reports: sharing.reports.list(param(url, "site")), smtp: !!analytics.smtp() }),
+    },
+    {
+      method: "POST",
+      path: "/api/v1/email-reports",
+      auth: "editor",
+      handle: async ({ req, res, user }) => json(res, 201, sharing.reports.create(user, await readJson(req))),
+    },
+    { method: "POST", path: "/api/v1/email-reports/:id/send", auth: "editor", handle: ({ params }) => sharing.reports.sendNow(params[0]!) },
+    {
+      method: "DELETE",
+      path: "/api/v1/email-reports/:id",
+      auth: "editor",
+      handle: ({ res, params }) => (sharing.reports.remove(params[0]!), noContent(res)),
+    },
+    { method: "GET", path: "/api/v1/shares", auth: "viewer", handle: ({ url }) => ({ shares: sharing.shares.list(param(url, "site")) }) },
+    {
+      method: "POST",
+      path: "/api/v1/shares",
+      auth: "editor",
+      handle: async ({ req, res, user }) => json(res, 201, await sharing.shares.create(user, await readJson(req))),
+    },
+    { method: "DELETE", path: "/api/v1/shares/:id", auth: "editor", handle: ({ res, params }) => (sharing.shares.revoke(params[0]!), noContent(res)) },
+    {
+      method: "GET",
+      path: "/api/v1/alerts",
+      auth: "viewer",
+      handle: ({ url }) => ({ rules: sharing.alerts.rules(param(url, "site")), alerts: sharing.alerts.history(param(url, "site")), smtp: !!analytics.smtp() }),
+    },
+    {
+      method: "POST",
+      path: "/api/v1/alerts",
+      auth: "editor",
+      handle: async ({ req, res, user }) => json(res, 201, sharing.alerts.create(user, await readJson(req))),
+    },
+    { method: "PATCH", path: "/api/v1/alerts/:id", auth: "editor", handle: async ({ req, params }) => sharing.alerts.update(params[0]!, await readJson(req)) },
+    { method: "DELETE", path: "/api/v1/alerts/:id", auth: "editor", handle: ({ res, params }) => (sharing.alerts.remove(params[0]!), noContent(res)) },
+
+    // A shared link, for people without an account: read-only totals, never a visit.
+    {
+      method: "GET",
+      path: "/api/v1/shared/:token",
+      auth: "none",
+      handle: ({ req, params }) => sharing.shares.open(params[0]!, header(req, "x-share-access")),
+    },
+    {
+      method: "POST",
+      path: "/api/v1/shared/:token/unlock",
+      auth: "none",
+      handle: async ({ req, params }) => sharing.shares.unlock(params[0]!, await readJson(req)),
+    },
+    {
+      method: "GET",
+      path: "/api/v1/shared/:token/report",
+      auth: "none",
+      handle: ({ req, url, params }) =>
+        sharing.shares.section(params[0]!, header(req, "x-share-access"), url.searchParams.get("section") ?? "overview", reportQuery(url)),
+    },
+    {
+      method: "GET",
+      path: "/api/v1/unsubscribe",
+      auth: "none",
+      handle: ({ res, url }) => {
+        const ok = sharing.reports.unsubscribe(url.searchParams.get("token") ?? "");
+        send(
+          res,
+          ok ? 200 : 404,
+          `<!doctype html><meta charset="utf-8"><title>OpenAsy Analytics</title><p style="font:16px system-ui;margin:3rem auto;max-width:32rem">${
+            ok ? "You will not get this report any more." : "This link is not one Analytics sent."
+          }</p>`,
+          "text/html; charset=utf-8",
+        );
+      },
+    },
 
     // A visitor's data, for requests under GDPR and KVKK (ADR 0015).
     { method: "GET", path: "/api/v1/visitors/:id", auth: "admin", handle: ({ url, params }) => analytics.visitor(param(url, "site", true)!, params[0]!) },
@@ -292,6 +536,8 @@ export function createApp({
         origin: req.headers.origin,
         key: typeof key === "string" ? key : undefined,
         userAgent: req.headers["user-agent"],
+        // Only to find the visit's place when it starts; it is not stored or logged.
+        ip: clientIp(req.socket.remoteAddress, req.headers["x-forwarded-for"], [...trustedProxies, ...analytics.trustedProxies()]),
       });
       json(res, 202, result, headers);
     } catch (err) {
@@ -348,16 +594,25 @@ export function createApp({
       endpoint: `${publicUrl}/api/v1/collect`,
       consent: site.consent,
       forms: site.forms,
+      vitals: site.vitals,
+      ecommerce: site.ecommerce,
       replay: site.replays ? { sample: site.replays.sample, script: `${publicUrl}/s/replay.js`, endpoint: `${publicUrl}/api/v1/replay` } : null,
       heatmap: `${publicUrl}/s/heatmap.js`,
     };
     send(res, 200, `/* OpenAsy Analytics */\n(function(){\n${tracker}\nOAT.start(${JSON.stringify(config)});\n})();\n`, "text/javascript", headers);
   }
 
-  function authorize(req: IncomingMessage, access: Access) {
-    if (access === "none") return;
-    if (tokenMatches(req.headers.authorization, adminToken)) return;
-    auth.authorize(req, access);
+  /** Checks the role a route needs, and says who is asking. */
+  function authorize(req: IncomingMessage, access: Access): { who: string | null; user: Who } {
+    const nobody: Who = { id: "", name: null, role: "viewer" };
+    if (access === "none") return { who: null, user: nobody };
+    if (tokenMatches(req.headers.authorization, adminToken)) return { who: null, user: { id: "admin-token", name: null, role: "admin" } };
+    const p = auth.authorize(req, access);
+    if (p.kind === "session") {
+      const name = p.user.name || p.user.email || null;
+      return { who: name, user: { id: `user:${p.user.id}`, name, role: p.role as Who["role"] } };
+    }
+    return { who: `token ${p.name}`, user: { id: `token:${p.tokenId}`, name: `token ${p.name}`, role: p.role as Who["role"] } };
   }
 
   async function route(req: IncomingMessage, res: ServerResponse): Promise<string> {
@@ -408,9 +663,9 @@ export function createApp({
       const m = path.match(r.re);
       if (!m || r.method !== req.method) continue;
       try {
-        authorize(req, r.auth);
+        const { who, user } = authorize(req, r.auth);
         const params = m.slice(1).map(decodeURIComponent);
-        const result = await r.handle({ req, res, url, params });
+        const result = await r.handle({ req, res, url, params, who, user });
         if (!res.headersSent && result !== undefined) json(res, 200, result);
       } catch (err) {
         if (err instanceof AuthError) {
@@ -456,5 +711,10 @@ export function createApp({
   };
 }
 
-/** The path without the query string, which may name visitors. */
-const url = (req: IncomingMessage) => (req.url ?? "/").split("?")[0];
+/** The path without the query string, which may name visitors, and without a shared link's token. */
+const url = (req: IncomingMessage) => (req.url ?? "/").split("?")[0]!.replace(/^\/(api\/v1\/)?shared\/[^/]+/, "/$1shared/***");
+
+const header = (req: IncomingMessage, name: string) => {
+  const v = req.headers[name];
+  return typeof v === "string" ? v : undefined;
+};

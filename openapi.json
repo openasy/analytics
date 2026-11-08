@@ -4,7 +4,7 @@
     "title": "OpenAsy Analytics API",
     "version": "0.1.0",
     "summary": "How people use your websites, from one script tag, kept in the install.",
-    "description": "Every screen of analytics uses this API, and so can your scripts (ADR 0014). Within `/api/v1` changes are additive only; anything removed is deprecated first (ADR 0024). Errors use Problem Details (RFC 9457).\n\nPages send what happened with `/api/v1/collect`, from the site's script at `/s/<site>.js`. Sites are set in the sites file, never through the API. Everything else takes the session of a signed-in person or an API token, and each operation names the role it needs (`x-openasy-role`: viewer, editor, admin; ADR 0003).\n\nSign-in, members and API tokens are under `/api/v1/auth`, provided by [@openasy/auth](https://github.com/openasy/auth#routes).",
+    "description": "Every screen of analytics uses this API, and so can your scripts (ADR 0014). Within `/api/v1` changes are additive only; anything removed is deprecated first (ADR 0024). Errors use Problem Details (RFC 9457).\n\nPages send what happened with `/api/v1/collect`, from the site's script at `/s/<site>.js`. Sites are set in the sites file, never through the API. Everything else takes the session of a signed-in person or an API token, and each operation names the role it needs (`x-openasy-role`: viewer, editor, admin; ADR 0003).\n\nSign-in, members and API tokens are under `/api/v1/auth`, provided by [@openasy/auth](https://github.com/openasy/auth#routes).\n\nEvery report takes `days`, any number of `filter` parameters and `compare`. A filter is `dimension:is:values` or `dimension:not:values`, the values separated by `|`, such as `filter=country:is:DE|AT&filter=channel:not:direct`; `(none)` matches a visit without a value, and `*` in a page, entry, exit or referrer matches any characters. `compare=previous` (the as many days just before) or `compare=year` (the same days a year before) adds the same report for that period under `compare`. Totals count `bounceRate` as GA4 does: the share of visits that were not engaged (longer than 10 seconds, two page views or more, or a goal reached).",
     "license": {
       "name": "AGPL-3.0-only",
       "identifier": "AGPL-3.0-only"
@@ -27,7 +27,7 @@
     },
     {
       "name": "Reports",
-      "description": "Visitors, pages, sources, visits and goals."
+      "description": "Visitors, pages, sources, visits, goals, breakdowns by any dimension, who is on the site now, Core Web Vitals, rage and dead clicks."
     },
     {
       "name": "Visitors",
@@ -36,6 +36,22 @@
     {
       "name": "Product",
       "description": "Version and overview of this analytics."
+    },
+    {
+      "name": "Annotations",
+      "description": "Notes on a site's timeline, such as a launch or a campaign."
+    },
+    {
+      "name": "Ecommerce",
+      "description": "Orders, revenue and products, from openasy.ecommerce()."
+    },
+    {
+      "name": "Search engines",
+      "description": "Queries and pages from Google Search Console, Bing Webmaster Tools and Yandex Webmaster, imported daily."
+    },
+    {
+      "name": "Sharing",
+      "description": "Saved segments, email reports, shared links and alerts."
     }
   ],
   "paths": {
@@ -243,6 +259,49 @@
         "x-openasy-role": "viewer"
       }
     },
+    "/api/v1/settings": {
+      "get": {
+        "operationId": "getSettingsFile",
+        "tags": [
+          "Sites"
+        ],
+        "summary": "The sites file",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "The sites file as it was last applied, read-only, with its state. It names the variables that hold server keys, never the keys. Needs the viewer role.",
+        "responses": {
+          "200": {
+            "description": "The file and its text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsFile"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      }
+    },
     "/api/v1/report": {
       "get": {
         "operationId": "getReport",
@@ -288,6 +347,35 @@
                 90
               ],
               "default": 7
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "style": "form",
+            "explode": true,
+            "description": "Keeps the visits with (is) or without (not) one of the values, such as country:is:DE|AT or page:not:/admin/*. Repeat it for more; all apply. Dimensions: channel, source, referrer, utmSource, utmMedium, utmCampaign, utmTerm, utmContent, entry, exit, browser, browserVersion, os, osVersion, device, country, region, city, language, timezone, screen, visitorType, page, event, goal. A page, event or goal keeps the visits that did it.",
+            "schema": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z]+:(is|not):.+$"
+              }
+            }
+          },
+          {
+            "name": "compare",
+            "in": "query",
+            "required": false,
+            "description": "Also the same report for the period just before (previous) or the same days a year before (year), under compare.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "previous",
+                "year"
+              ]
             }
           }
         ],
@@ -389,6 +477,37 @@
             "description": "The previous page's nextCursor.",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "description": "Only visits active in today (1) or the last 7, 30 or 90 days; all that are kept when left out.",
+            "schema": {
+              "type": "integer",
+              "enum": [
+                1,
+                7,
+                30,
+                90
+              ]
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "style": "form",
+            "explode": true,
+            "description": "Keeps the visits with (is) or without (not) one of the values, such as country:is:DE|AT or page:not:/admin/*. Repeat it for more; all apply. Dimensions: channel, source, referrer, utmSource, utmMedium, utmCampaign, utmTerm, utmContent, entry, exit, browser, browserVersion, os, osVersion, device, country, region, city, language, timezone, screen, visitorType, page, event, goal. A page, event or goal keeps the visits that did it.",
+            "schema": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z]+:(is|not):.+$"
+              }
             }
           }
         ],
@@ -811,6 +930,35 @@
               ],
               "default": 7
             }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "style": "form",
+            "explode": true,
+            "description": "Keeps the visits with (is) or without (not) one of the values, such as country:is:DE|AT or page:not:/admin/*. Repeat it for more; all apply. Dimensions: channel, source, referrer, utmSource, utmMedium, utmCampaign, utmTerm, utmContent, entry, exit, browser, browserVersion, os, osVersion, device, country, region, city, language, timezone, screen, visitorType, page, event, goal. A page, event or goal keeps the visits that did it.",
+            "schema": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z]+:(is|not):.+$"
+              }
+            }
+          },
+          {
+            "name": "compare",
+            "in": "query",
+            "required": false,
+            "description": "Also the same report for the period just before (previous) or the same days a year before (year), under compare.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "previous",
+                "year"
+              ]
+            }
           }
         ],
         "responses": {
@@ -888,6 +1036,35 @@
                 90
               ],
               "default": 7
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "style": "form",
+            "explode": true,
+            "description": "Keeps the visits with (is) or without (not) one of the values, such as country:is:DE|AT or page:not:/admin/*. Repeat it for more; all apply. Dimensions: channel, source, referrer, utmSource, utmMedium, utmCampaign, utmTerm, utmContent, entry, exit, browser, browserVersion, os, osVersion, device, country, region, city, language, timezone, screen, visitorType, page, event, goal. A page, event or goal keeps the visits that did it.",
+            "schema": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z]+:(is|not):.+$"
+              }
+            }
+          },
+          {
+            "name": "compare",
+            "in": "query",
+            "required": false,
+            "description": "Also the same report for the period just before (previous) or the same days a year before (year), under compare.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "previous",
+                "year"
+              ]
             }
           }
         ],
@@ -992,6 +1169,35 @@
                 "tablet"
               ]
             }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "style": "form",
+            "explode": true,
+            "description": "Keeps the visits with (is) or without (not) one of the values, such as country:is:DE|AT or page:not:/admin/*. Repeat it for more; all apply. Dimensions: channel, source, referrer, utmSource, utmMedium, utmCampaign, utmTerm, utmContent, entry, exit, browser, browserVersion, os, osVersion, device, country, region, city, language, timezone, screen, visitorType, page, event, goal. A page, event or goal keeps the visits that did it.",
+            "schema": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z]+:(is|not):.+$"
+              }
+            }
+          },
+          {
+            "name": "compare",
+            "in": "query",
+            "required": false,
+            "description": "Also the same report for the period just before (previous) or the same days a year before (year), under compare.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "previous",
+                "year"
+              ]
+            }
           }
         ],
         "responses": {
@@ -1090,6 +1296,22 @@
             "description": "The previous page's nextCursor.",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "style": "form",
+            "explode": true,
+            "description": "Keeps the visits with (is) or without (not) one of the values, such as country:is:DE|AT or page:not:/admin/*. Repeat it for more; all apply. Dimensions: channel, source, referrer, utmSource, utmMedium, utmCampaign, utmTerm, utmContent, entry, exit, browser, browserVersion, os, osVersion, device, country, region, city, language, timezone, screen, visitorType, page, event, goal. A page, event or goal keeps the visits that did it.",
+            "schema": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z]+:(is|not):.+$"
+              }
             }
           }
         ],
@@ -1296,6 +1518,2823 @@
             "$ref": "#/components/responses/Problem"
           }
         }
+      }
+    },
+    "/api/v1/breakdown": {
+      "get": {
+        "operationId": "getBreakdown",
+        "tags": [
+          "Reports"
+        ],
+        "summary": "Visits by one dimension",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Visitors, visits and page views by a dimension of a visit (such as country, channel or browser version), or pages, events, site searches, pages not found, links out and downloads. Needs the viewer role.",
+        "parameters": [
+          {
+            "name": "site",
+            "in": "query",
+            "required": true,
+            "description": "The site, by its name in the sites file.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "dimension",
+            "in": "query",
+            "required": true,
+            "description": "What to group by.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "channel",
+                "source",
+                "referrer",
+                "utmSource",
+                "utmMedium",
+                "utmCampaign",
+                "utmTerm",
+                "utmContent",
+                "entry",
+                "exit",
+                "browser",
+                "browserVersion",
+                "os",
+                "osVersion",
+                "device",
+                "country",
+                "region",
+                "city",
+                "language",
+                "timezone",
+                "screen",
+                "visitorType",
+                "page",
+                "event",
+                "search",
+                "notFound",
+                "outbound",
+                "download"
+              ]
+            }
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "description": "Today (1) or the last 7, 30 or 90 days.",
+            "schema": {
+              "type": "integer",
+              "enum": [
+                1,
+                7,
+                30,
+                90
+              ],
+              "default": 7
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "style": "form",
+            "explode": true,
+            "description": "Keeps the visits with (is) or without (not) one of the values, such as country:is:DE|AT or page:not:/admin/*. Repeat it for more; all apply. Dimensions: channel, source, referrer, utmSource, utmMedium, utmCampaign, utmTerm, utmContent, entry, exit, browser, browserVersion, os, osVersion, device, country, region, city, language, timezone, screen, visitorType, page, event, goal. A page, event or goal keeps the visits that did it.",
+            "schema": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z]+:(is|not):.+$"
+              }
+            }
+          },
+          {
+            "name": "compare",
+            "in": "query",
+            "required": false,
+            "description": "Also the same report for the period just before (previous) or the same days a year before (year), under compare.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "previous",
+                "year"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Rows, most visitors first.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The rows, and those of the period compared with.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Breakdown"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      }
+    },
+    "/api/v1/realtime": {
+      "get": {
+        "operationId": "getRealtime",
+        "tags": [
+          "Reports"
+        ],
+        "summary": "Who is on the site now",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Visits active in the last five minutes, the page each is on, where they came from, and page views a minute over the last half hour. Needs the viewer role.",
+        "parameters": [
+          {
+            "name": "site",
+            "in": "query",
+            "required": true,
+            "description": "The site, by its name in the sites file.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "style": "form",
+            "explode": true,
+            "description": "Keeps the visits with (is) or without (not) one of the values, such as country:is:DE|AT or page:not:/admin/*. Repeat it for more; all apply. Dimensions: channel, source, referrer, utmSource, utmMedium, utmCampaign, utmTerm, utmContent, entry, exit, browser, browserVersion, os, osVersion, device, country, region, city, language, timezone, screen, visitorType, page, event, goal. A page, event or goal keeps the visits that did it.",
+            "schema": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z]+:(is|not):.+$"
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Now.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Realtime"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      }
+    },
+    "/api/v1/vitals": {
+      "get": {
+        "operationId": "getVitals",
+        "tags": [
+          "Reports"
+        ],
+        "summary": "Core Web Vitals",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "LCP, INP and CLS at the 75th percentile, overall, by kind of device, and by page and device, from sites with vitals: true. Needs the viewer role.",
+        "parameters": [
+          {
+            "name": "site",
+            "in": "query",
+            "required": true,
+            "description": "The site, by its name in the sites file.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "description": "Today (1) or the last 7, 30 or 90 days.",
+            "schema": {
+              "type": "integer",
+              "enum": [
+                1,
+                7,
+                30,
+                90
+              ],
+              "default": 7
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "style": "form",
+            "explode": true,
+            "description": "Keeps the visits with (is) or without (not) one of the values, such as country:is:DE|AT or page:not:/admin/*. Repeat it for more; all apply. Dimensions: channel, source, referrer, utmSource, utmMedium, utmCampaign, utmTerm, utmContent, entry, exit, browser, browserVersion, os, osVersion, device, country, region, city, language, timezone, screen, visitorType, page, event, goal. A page, event or goal keeps the visits that did it.",
+            "schema": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z]+:(is|not):.+$"
+              }
+            }
+          },
+          {
+            "name": "compare",
+            "in": "query",
+            "required": false,
+            "description": "Also the same report for the period just before (previous) or the same days a year before (year), under compare.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "previous",
+                "year"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The vitals.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Vitals"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      }
+    },
+    "/api/v1/frustration": {
+      "get": {
+        "operationId": "getFrustration",
+        "tags": [
+          "Reports"
+        ],
+        "summary": "Rage and dead clicks",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Rage clicks (three or more on one element within a second) and dead clicks (nothing changed on the page), by page and by element. Needs the viewer role.",
+        "parameters": [
+          {
+            "name": "site",
+            "in": "query",
+            "required": true,
+            "description": "The site, by its name in the sites file.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "description": "Today (1) or the last 7, 30 or 90 days.",
+            "schema": {
+              "type": "integer",
+              "enum": [
+                1,
+                7,
+                30,
+                90
+              ],
+              "default": 7
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "style": "form",
+            "explode": true,
+            "description": "Keeps the visits with (is) or without (not) one of the values, such as country:is:DE|AT or page:not:/admin/*. Repeat it for more; all apply. Dimensions: channel, source, referrer, utmSource, utmMedium, utmCampaign, utmTerm, utmContent, entry, exit, browser, browserVersion, os, osVersion, device, country, region, city, language, timezone, screen, visitorType, page, event, goal. A page, event or goal keeps the visits that did it.",
+            "schema": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z]+:(is|not):.+$"
+              }
+            }
+          },
+          {
+            "name": "compare",
+            "in": "query",
+            "required": false,
+            "description": "Also the same report for the period just before (previous) or the same days a year before (year), under compare.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "previous",
+                "year"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The clicks.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Frustration"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      }
+    },
+    "/api/v1/annotations": {
+      "get": {
+        "operationId": "listAnnotations",
+        "tags": [
+          "Annotations"
+        ],
+        "summary": "A site's annotations",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Notes on the site's timeline, oldest first: those of the period with days, or all. Needs the viewer role.",
+        "parameters": [
+          {
+            "name": "site",
+            "in": "query",
+            "required": true,
+            "description": "The site, by its name in the sites file.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "description": "Only those of today (1) or the last 7, 30 or 90 days; all when left out.",
+            "schema": {
+              "type": "integer",
+              "enum": [
+                1,
+                7,
+                30,
+                90
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The annotations.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnnotationList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      },
+      "post": {
+        "operationId": "createAnnotation",
+        "tags": [
+          "Annotations"
+        ],
+        "summary": "Add an annotation",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "A note on one day of the site's timeline, such as a launch. Needs the editor role.",
+        "parameters": [
+          {
+            "name": "site",
+            "in": "query",
+            "required": true,
+            "description": "The site, by its name in the sites file.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Added.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Annotation"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "editor",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewAnnotation"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/annotations/{id}": {
+      "delete": {
+        "operationId": "deleteAnnotation",
+        "tags": [
+          "Annotations"
+        ],
+        "summary": "Delete an annotation",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Needs the editor role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "site",
+            "in": "query",
+            "required": true,
+            "description": "The site, by its name in the sites file.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted."
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "editor"
+      }
+    },
+    "/api/v1/ecommerce": {
+      "get": {
+        "operationId": "getEcommerce",
+        "tags": [
+          "Ecommerce"
+        ],
+        "summary": "Orders, revenue and products",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Orders, revenue, average order, refunds, the purchase funnel (view_item, add_to_cart, begin_checkout, purchase), each product's views, carts and sales, and revenue by source, campaign and channel. Needs the viewer role.",
+        "parameters": [
+          {
+            "name": "site",
+            "in": "query",
+            "required": true,
+            "description": "The site, by its name in the sites file.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "description": "Today (1) or the last 7, 30 or 90 days.",
+            "schema": {
+              "type": "integer",
+              "enum": [
+                1,
+                7,
+                30,
+                90
+              ],
+              "default": 7
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "style": "form",
+            "explode": true,
+            "description": "Keeps the visits with (is) or without (not) one of the values, such as country:is:DE|AT or page:not:/admin/*. Repeat it for more; all apply. Dimensions: channel, source, referrer, utmSource, utmMedium, utmCampaign, utmTerm, utmContent, entry, exit, browser, browserVersion, os, osVersion, device, country, region, city, language, timezone, screen, visitorType, page, event, goal. A page, event or goal keeps the visits that did it.",
+            "schema": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z]+:(is|not):.+$"
+              }
+            }
+          },
+          {
+            "name": "compare",
+            "in": "query",
+            "required": false,
+            "description": "Also the same report for the period just before (previous) or the same days a year before (year), under compare.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "previous",
+                "year"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The ecommerce report.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ecommerce"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      }
+    },
+    "/api/v1/attribution": {
+      "get": {
+        "operationId": "getAttribution",
+        "tags": [
+          "Reports"
+        ],
+        "summary": "Attribution of a goal",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Credit for a goal's conversions in the period: first touch (the first visit of the visitor in the lookback), last touch (the converting visit) and linear (shared evenly), over the visitor's kept visits. Filters keep the converting visits. Needs the viewer role.",
+        "parameters": [
+          {
+            "name": "site",
+            "in": "query",
+            "required": true,
+            "description": "The site, by its name in the sites file.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "description": "Today (1) or the last 7, 30 or 90 days.",
+            "schema": {
+              "type": "integer",
+              "enum": [
+                1,
+                7,
+                30,
+                90
+              ],
+              "default": 7
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "style": "form",
+            "explode": true,
+            "description": "Keeps the visits with (is) or without (not) one of the values, such as country:is:DE|AT or page:not:/admin/*. Repeat it for more; all apply. Dimensions: channel, source, referrer, utmSource, utmMedium, utmCampaign, utmTerm, utmContent, entry, exit, browser, browserVersion, os, osVersion, device, country, region, city, language, timezone, screen, visitorType, page, event, goal. A page, event or goal keeps the visits that did it.",
+            "schema": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z]+:(is|not):.+$"
+              }
+            }
+          },
+          {
+            "name": "compare",
+            "in": "query",
+            "required": false,
+            "description": "Also the same report for the period just before (previous) or the same days a year before (year), under compare.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "previous",
+                "year"
+              ]
+            }
+          },
+          {
+            "name": "goal",
+            "in": "query",
+            "required": true,
+            "description": "The goal, by its name in the sites file.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "lookback",
+            "in": "query",
+            "required": false,
+            "description": "Days before a conversion whose visits share in it.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 90,
+              "default": 30
+            }
+          },
+          {
+            "name": "by",
+            "in": "query",
+            "required": false,
+            "description": "What the credit goes to.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "channel",
+                "source",
+                "campaign"
+              ],
+              "default": "channel"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The attribution.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Attribution"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      }
+    },
+    "/api/v1/paths": {
+      "get": {
+        "operationId": "getPaths",
+        "tags": [
+          "Reports"
+        ],
+        "summary": "Paths from or to a page",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Where visits went on from the first view of a page, or how they reached it, step by step; each step keeps its six most visited pages. Needs the viewer role.",
+        "parameters": [
+          {
+            "name": "site",
+            "in": "query",
+            "required": true,
+            "description": "The site, by its name in the sites file.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "description": "Today (1) or the last 7, 30 or 90 days.",
+            "schema": {
+              "type": "integer",
+              "enum": [
+                1,
+                7,
+                30,
+                90
+              ],
+              "default": 7
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "style": "form",
+            "explode": true,
+            "description": "Keeps the visits with (is) or without (not) one of the values, such as country:is:DE|AT or page:not:/admin/*. Repeat it for more; all apply. Dimensions: channel, source, referrer, utmSource, utmMedium, utmCampaign, utmTerm, utmContent, entry, exit, browser, browserVersion, os, osVersion, device, country, region, city, language, timezone, screen, visitorType, page, event, goal. A page, event or goal keeps the visits that did it.",
+            "schema": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z]+:(is|not):.+$"
+              }
+            }
+          },
+          {
+            "name": "compare",
+            "in": "query",
+            "required": false,
+            "description": "Also the same report for the period just before (previous) or the same days a year before (year), under compare.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "previous",
+                "year"
+              ]
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": true,
+            "description": "The page's path; * matches any characters.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          },
+          {
+            "name": "direction",
+            "in": "query",
+            "required": false,
+            "description": "Onward from the page, or back to how visits reached it.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "from",
+                "to"
+              ],
+              "default": "from"
+            }
+          },
+          {
+            "name": "steps",
+            "in": "query",
+            "required": false,
+            "description": "Steps to follow.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5,
+              "default": 3
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The paths.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Paths"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      }
+    },
+    "/api/v1/retention": {
+      "get": {
+        "operationId": "getRetention",
+        "tags": [
+          "Reports"
+        ],
+        "summary": "Retention",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Weekly cohorts, stickiness (daily, weekly and monthly active visitors) and each week's new, returning and resurrected visitors. A visitor is the id the script keeps in the browser; first seen is their first visit still kept. Needs the viewer role.",
+        "parameters": [
+          {
+            "name": "site",
+            "in": "query",
+            "required": true,
+            "description": "The site, by its name in the sites file.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "weeks",
+            "in": "query",
+            "required": false,
+            "description": "Weeks of cohorts, this one last.",
+            "schema": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 26,
+              "default": 8
+            }
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "description": "Days of stickiness: 1, 7, 30 or 90.",
+            "schema": {
+              "type": "integer",
+              "enum": [
+                1,
+                7,
+                30,
+                90
+              ],
+              "default": 30
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "style": "form",
+            "explode": true,
+            "description": "Keeps the visits with (is) or without (not) one of the values, such as country:is:DE|AT or page:not:/admin/*. Repeat it for more; all apply. Dimensions: channel, source, referrer, utmSource, utmMedium, utmCampaign, utmTerm, utmContent, entry, exit, browser, browserVersion, os, osVersion, device, country, region, city, language, timezone, screen, visitorType, page, event, goal. A page, event or goal keeps the visits that did it.",
+            "schema": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z]+:(is|not):.+$"
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Retention.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Retention"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      }
+    },
+    "/api/v1/sitesearch": {
+      "get": {
+        "operationId": "getSiteSearch",
+        "tags": [
+          "Reports"
+        ],
+        "summary": "Site search",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Each term searched on the site, with what came after: a result clicked, another search or leaving, and how often the page found nothing. Needs the viewer role.",
+        "parameters": [
+          {
+            "name": "site",
+            "in": "query",
+            "required": true,
+            "description": "The site, by its name in the sites file.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "description": "Today (1) or the last 7, 30 or 90 days.",
+            "schema": {
+              "type": "integer",
+              "enum": [
+                1,
+                7,
+                30,
+                90
+              ],
+              "default": 7
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "style": "form",
+            "explode": true,
+            "description": "Keeps the visits with (is) or without (not) one of the values, such as country:is:DE|AT or page:not:/admin/*. Repeat it for more; all apply. Dimensions: channel, source, referrer, utmSource, utmMedium, utmCampaign, utmTerm, utmContent, entry, exit, browser, browserVersion, os, osVersion, device, country, region, city, language, timezone, screen, visitorType, page, event, goal. A page, event or goal keeps the visits that did it.",
+            "schema": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z]+:(is|not):.+$"
+              }
+            }
+          },
+          {
+            "name": "compare",
+            "in": "query",
+            "required": false,
+            "description": "Also the same report for the period just before (previous) or the same days a year before (year), under compare.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "previous",
+                "year"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Site search.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiteSearch"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      }
+    },
+    "/api/v1/search-console": {
+      "get": {
+        "operationId": "getSearchConsole",
+        "tags": [
+          "Search engines"
+        ],
+        "summary": "Search engine queries and pages",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "What people searched before they came, from one engine's tools as imported daily: totals, queries with their page, pages beside the bounce rate of the visits that entered there. Filters do not apply. Needs the viewer role.",
+        "parameters": [
+          {
+            "name": "site",
+            "in": "query",
+            "required": true,
+            "description": "The site, by its name in the sites file.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "description": "Today (1) or the last 7, 30 or 90 days.",
+            "schema": {
+              "type": "integer",
+              "enum": [
+                1,
+                7,
+                30,
+                90
+              ],
+              "default": 7
+            }
+          },
+          {
+            "name": "compare",
+            "in": "query",
+            "required": false,
+            "description": "Also the same report for the period just before (previous) or the same days a year before (year), under compare.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "previous",
+                "year"
+              ]
+            }
+          },
+          {
+            "name": "engine",
+            "in": "query",
+            "required": false,
+            "description": "The search engine.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "google",
+                "bing",
+                "yandex"
+              ],
+              "default": "google"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The search report.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchConsole"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      }
+    },
+    "/api/v1/segments": {
+      "get": {
+        "operationId": "listSegments",
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "Saved segments",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "The member's own segments and the team's. Needs the viewer role.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "The segments.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "segments"
+                  ],
+                  "properties": {
+                    "segments": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Segment"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      },
+      "post": {
+        "operationId": "createSegment",
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "Save a segment",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Filters under a name, for the member alone or shared with the team. Needs the viewer role.",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": "Saved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Segment"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "filters"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  },
+                  "filters": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z]+:(is|not):.+$"
+                    }
+                  },
+                  "shared": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/segments/{id}": {
+      "delete": {
+        "operationId": "deleteSegment",
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "Delete a segment",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Its owner deletes a segment; an admin also a shared one. Needs the viewer role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted."
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      }
+    },
+    "/api/v1/email-reports": {
+      "get": {
+        "operationId": "listEmailReports",
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "Email reports",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Reports sent by email: daily at 08:00, weekly on Mondays at 09:00 and monthly on the 1st at 09:00, in the time zone of smtp: in the sites file. Needs the viewer role.",
+        "parameters": [
+          {
+            "name": "site",
+            "in": "query",
+            "required": false,
+            "description": "Only this site's.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The reports.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "reports",
+                    "smtp"
+                  ],
+                  "properties": {
+                    "reports": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/EmailReport"
+                      }
+                    },
+                    "smtp": {
+                      "type": "boolean",
+                      "description": "Whether the sites file names a mail server."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      },
+      "post": {
+        "operationId": "createEmailReport",
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "Create an email report",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "The first is sent at the next period. Needs the editor role.",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": "Created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailReport"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "editor",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "site",
+                  "name",
+                  "recipients",
+                  "every",
+                  "sections"
+                ],
+                "properties": {
+                  "site": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "recipients": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "every": {
+                    "type": "string",
+                    "enum": [
+                      "daily",
+                      "weekly",
+                      "monthly"
+                    ]
+                  },
+                  "sections": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "overview",
+                        "acquisition",
+                        "conversions",
+                        "ecommerce",
+                        "search",
+                        "performance"
+                      ]
+                    }
+                  },
+                  "segment": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/email-reports/{id}": {
+      "delete": {
+        "operationId": "deleteEmailReport",
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "Delete an email report",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": " Needs the editor role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted."
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "editor"
+      }
+    },
+    "/api/v1/email-reports/{id}/send": {
+      "post": {
+        "operationId": "sendEmailReport",
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "Send an email report now",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "For the days up to the end of yesterday, to every recipient. Needs the editor role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sent.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/EmailReport"
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "sent"
+                      ],
+                      "properties": {
+                        "sent": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "editor"
+      }
+    },
+    "/api/v1/shares": {
+      "get": {
+        "operationId": "listShares",
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "Shared links",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Read-only links to a site's totals, for people without an account. Needs the viewer role.",
+        "parameters": [
+          {
+            "name": "site",
+            "in": "query",
+            "required": false,
+            "description": "Only this site's.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The links.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "shares"
+                  ],
+                  "properties": {
+                    "shares": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Share"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      },
+      "post": {
+        "operationId": "createShare",
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "Create a shared link",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "The link's address is in the answer once; only its hash is kept. Needs the editor role.",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": "Created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Share"
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "url"
+                      ],
+                      "properties": {
+                        "url": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "editor",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "site",
+                  "name",
+                  "sections"
+                ],
+                "properties": {
+                  "site": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "sections": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "overview",
+                        "acquisition",
+                        "conversions",
+                        "ecommerce",
+                        "search",
+                        "performance"
+                      ]
+                    }
+                  },
+                  "password": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "minLength": 12
+                  },
+                  "expiresDays": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 1,
+                    "maximum": 3650
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/shares/{id}": {
+      "delete": {
+        "operationId": "revokeShare",
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "Revoke a shared link",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "The link stops working at once. Needs the editor role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Revoked."
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "editor"
+      }
+    },
+    "/api/v1/shared/{token}": {
+      "get": {
+        "operationId": "openShared",
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "Open a shared link",
+        "security": [
+          {}
+        ],
+        "description": "What a link shows: its name, site and sections, and whether it asks for a password. 120 requests a minute per link.",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The token in the shared link."
+          },
+          {
+            "name": "x-share-access",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "What unlock gave, for a link with a password."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The link.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "name",
+                    "site",
+                    "sections",
+                    "password",
+                    "unlocked",
+                    "currency",
+                    "expiresAt"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "site": {
+                      "type": "string"
+                    },
+                    "sections": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "overview",
+                          "acquisition",
+                          "conversions",
+                          "ecommerce",
+                          "search",
+                          "performance"
+                        ]
+                      }
+                    },
+                    "password": {
+                      "type": "boolean"
+                    },
+                    "unlocked": {
+                      "type": "boolean"
+                    },
+                    "currency": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "expiresAt": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "429": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "none"
+      }
+    },
+    "/api/v1/shared/{token}/unlock": {
+      "post": {
+        "operationId": "unlockShared",
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "Unlock a shared link",
+        "security": [
+          {}
+        ],
+        "description": "Its password gives access for 12 hours. 10 tries a quarter of an hour per link.",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The token in the shared link."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Unlocked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "access",
+                    "expiresAt"
+                  ],
+                  "properties": {
+                    "access": {
+                      "type": "string"
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "429": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "none",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "password"
+                ],
+                "properties": {
+                  "password": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/shared/{token}/report": {
+      "get": {
+        "operationId": "getShared",
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "A section of a shared link",
+        "security": [
+          {}
+        ],
+        "description": "Totals and tables of one section, never a visit, a replay, a heatmap or a visitor id. Filters by channel, source, utmSource, utmMedium, utmCampaign, country, device, browser, os, page and goal only.",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The token in the shared link."
+          },
+          {
+            "name": "x-share-access",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "What unlock gave, for a link with a password."
+          },
+          {
+            "name": "section",
+            "in": "query",
+            "required": false,
+            "description": "The section.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "overview",
+                "acquisition",
+                "conversions",
+                "ecommerce",
+                "search",
+                "performance"
+              ]
+            }
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "description": "Today (1) or the last 7, 30 or 90 days.",
+            "schema": {
+              "type": "integer",
+              "enum": [
+                1,
+                7,
+                30,
+                90
+              ],
+              "default": 7
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "style": "form",
+            "explode": true,
+            "description": "Keeps the visits with (is) or without (not) one of the values, such as country:is:DE|AT or page:not:/admin/*. Repeat it for more; all apply. Dimensions: channel, source, referrer, utmSource, utmMedium, utmCampaign, utmTerm, utmContent, entry, exit, browser, browserVersion, os, osVersion, device, country, region, city, language, timezone, screen, visitorType, page, event, goal. A page, event or goal keeps the visits that did it.",
+            "schema": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z]+:(is|not):.+$"
+              }
+            }
+          },
+          {
+            "name": "compare",
+            "in": "query",
+            "required": false,
+            "description": "Also the same report for the period just before (previous) or the same days a year before (year), under compare.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "previous",
+                "year"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The section.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "site",
+                    "section",
+                    "days",
+                    "data"
+                  ],
+                  "properties": {
+                    "site": {
+                      "type": "string"
+                    },
+                    "section": {
+                      "type": "string",
+                      "enum": [
+                        "overview",
+                        "acquisition",
+                        "conversions",
+                        "ecommerce",
+                        "search",
+                        "performance"
+                      ]
+                    },
+                    "days": {
+                      "type": "integer"
+                    },
+                    "data": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "429": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "none"
+      }
+    },
+    "/api/v1/unsubscribe": {
+      "get": {
+        "operationId": "unsubscribe",
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "Stop an email report",
+        "description": "The link in each email report: takes its recipient off the report.",
+        "security": [
+          {}
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": true,
+            "description": "From the email.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Stopped.",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not a link Analytics sent.",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "none"
+      }
+    },
+    "/api/v1/alerts": {
+      "get": {
+        "operationId": "listAlerts",
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "Alert rules and alerts",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Each rule compares a site's visits in the last whole hour with the usual: the median of the same hour of the same weekday over the 8 weeks before. A drop is under the rule's share of the usual (when the usual is 10 or more), a spike over its multiple (with 10 visits or more). Needs the viewer role.",
+        "parameters": [
+          {
+            "name": "site",
+            "in": "query",
+            "required": false,
+            "description": "Only this site's.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The rules and the latest alerts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "rules",
+                    "alerts",
+                    "smtp"
+                  ],
+                  "properties": {
+                    "rules": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/AlertRule"
+                      }
+                    },
+                    "alerts": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Alert"
+                      }
+                    },
+                    "smtp": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      },
+      "post": {
+        "operationId": "createAlertRule",
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "Create an alert rule",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Sent by email to its recipients and as a JSON POST to its webhook when an alert starts. Needs the editor role.",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": "Created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlertRule"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "editor",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "site",
+                  "name",
+                  "kind"
+                ],
+                "properties": {
+                  "site": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "drop",
+                      "spike"
+                    ]
+                  },
+                  "ratio": {
+                    "type": "number"
+                  },
+                  "recipients": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "webhook": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/alerts/{id}": {
+      "patch": {
+        "operationId": "updateAlertRule",
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "Turn an alert rule on or off",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": " Needs the editor role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Updated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlertRule"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "editor",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "enabled"
+                ],
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteAlertRule",
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "Delete an alert rule",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": " Needs the editor role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted."
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "editor"
       }
     }
   },
@@ -1566,6 +4605,96 @@
           "again": {
             "type": "boolean",
             "description": "form leave: whether the field was entered before in this form."
+          },
+          "language": {
+            "type": "string",
+            "maxLength": 35,
+            "description": "pageview: the browser's language, such as en-US; kept as the language and region."
+          },
+          "timezone": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "pageview: the browser's time zone, such as Europe/Istanbul."
+          },
+          "screen": {
+            "type": "string",
+            "pattern": "^[1-9]\\d{1,4}x[1-9]\\d{1,4}$",
+            "description": "pageview: the screen's size in CSS pixels, such as 1920x1080."
+          },
+          "notFound": {
+            "type": "boolean",
+            "description": "pageview, leave: the site marked the page as not found (<meta name=\"analytics\" content=\"404\"> or openasy.notFound())."
+          },
+          "dead": {
+            "type": "boolean",
+            "description": "click: nothing changed on the page within a second. Sent again with the same at when the first was already sent; the two are joined."
+          },
+          "lcp": {
+            "type": "number",
+            "minimum": 0,
+            "description": "leave: Largest Contentful Paint of the page, in milliseconds."
+          },
+          "inp": {
+            "type": "number",
+            "minimum": 0,
+            "description": "leave: Interaction to Next Paint of the page, in milliseconds."
+          },
+          "cls": {
+            "type": "number",
+            "minimum": 0,
+            "description": "leave: Cumulative Layout Shift of the page."
+          },
+          "noResults": {
+            "type": "boolean",
+            "description": "pageview, leave: the site's search found nothing on this page (<meta name=\"analytics\" content=\"no-results\"> or openasy.noResults())."
+          },
+          "order": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9_.:#/-]{1,64}$",
+            "description": "event view_item, add_to_cart, begin_checkout, purchase or refund: the order's id, required for purchase and refund. An order is kept once."
+          },
+          "value": {
+            "type": "number",
+            "description": "Ecommerce event: what the order or cart is worth; without it, the products' prices times their quantities. A refund without it refunds the whole order."
+          },
+          "currency": {
+            "type": "string",
+            "pattern": "^[A-Z]{3}$",
+            "description": "Ecommerce event: ISO 4217. An event in another currency than the site's is dropped."
+          },
+          "items": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Ecommerce event: the products, with nothing about who bought them.",
+            "items": {
+              "type": "object",
+              "required": [
+                "sku"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "sku": {
+                  "type": "string",
+                  "maxLength": 64
+                },
+                "name": {
+                  "type": "string",
+                  "maxLength": 120
+                },
+                "category": {
+                  "type": "string",
+                  "maxLength": 80
+                },
+                "price": {
+                  "type": "number"
+                },
+                "quantity": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
           }
         }
       },
@@ -1628,7 +4757,8 @@
         "required": [
           "name",
           "path",
-          "event"
+          "event",
+          "download"
         ],
         "properties": {
           "name": {
@@ -1645,6 +4775,43 @@
               "string",
               "null"
             ]
+          },
+          "download": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A file downloaded from a link, by its path or address pattern."
+          },
+          "value": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "amount"
+                ],
+                "properties": {
+                  "amount": {
+                    "type": "number"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "prop"
+                ],
+                "properties": {
+                  "prop": {
+                    "type": "string"
+                  }
+                }
+              }
+            ],
+            "description": "What a conversion is worth: a fixed amount, or its event's property (value: an ecommerce event's own value)."
           }
         }
       },
@@ -1707,7 +4874,16 @@
           "lastEventAt",
           "funnels",
           "forms",
-          "replays"
+          "replays",
+          "search",
+          "notFound",
+          "channels",
+          "vitals",
+          "downloads",
+          "location",
+          "currency",
+          "ecommerce",
+          "searchConsole"
         ],
         "properties": {
           "name": {
@@ -1851,6 +5027,115 @@
                 "description": "Days a replay is kept."
               }
             }
+          },
+          "search": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "required": [
+              "path",
+              "params"
+            ],
+            "properties": {
+              "path": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "params": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The site's own search: its query parameters, on the pages that match path (any page when null)."
+          },
+          "notFound": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "required": [
+              "title"
+            ],
+            "properties": {
+              "title": {
+                "type": "string"
+              }
+            },
+            "description": "The title a page not found has."
+          },
+          "channels": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "description": "The site's own sources put in a channel before the rules."
+          },
+          "vitals": {
+            "type": "boolean",
+            "description": "Whether the script measures Core Web Vitals."
+          },
+          "downloads": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "File endings a link counts as a download for."
+          },
+          "location": {
+            "type": "string",
+            "enum": [
+              "city",
+              "region",
+              "country",
+              "off"
+            ],
+            "description": "How precisely a visit's place is worked out from its IP address, which is never kept."
+          },
+          "currency": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ecommerce": {
+            "type": "boolean"
+          },
+          "searchConsole": {
+            "type": "object",
+            "required": [
+              "google",
+              "bing",
+              "yandex"
+            ],
+            "properties": {
+              "google": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "bing": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "yandex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "description": "The site's property in each search engine's tools."
           }
         }
       },
@@ -1872,6 +5157,25 @@
           }
         }
       },
+      "SettingsFile": {
+        "type": "object",
+        "required": [
+          "file",
+          "yaml"
+        ],
+        "properties": {
+          "file": {
+            "$ref": "#/components/schemas/ConfigFile"
+          },
+          "yaml": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The text of the file as it was last applied; null before it was first applied."
+          }
+        }
+      },
       "Summary": {
         "type": "object",
         "required": [
@@ -1881,7 +5185,8 @@
           "visits24h",
           "pageviews24h",
           "live",
-          "lastEventAt"
+          "lastEventAt",
+          "location"
         ],
         "properties": {
           "sites": {
@@ -1909,6 +5214,62 @@
               "null"
             ],
             "format": "date-time"
+          },
+          "location": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The GeoIP database places come from, with the attribution its licence asks for.",
+            "required": [
+              "enabled",
+              "file",
+              "update",
+              "database",
+              "month",
+              "updatedAt",
+              "attribution",
+              "error"
+            ],
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "file": {
+                "type": "string"
+              },
+              "update": {
+                "type": "boolean",
+                "description": "DB-IP Lite city is downloaded into the file monthly."
+              },
+              "database": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "month": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "updatedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "attribution": {
+                "type": "string"
+              },
+              "error": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
           }
         }
       },
@@ -1930,7 +5291,10 @@
           "devices",
           "events",
           "clicks",
-          "goals"
+          "goals",
+          "channels",
+          "annotations",
+          "to"
         ],
         "properties": {
           "site": {
@@ -1956,7 +5320,11 @@
               "visits",
               "pageviews",
               "bounceRate",
-              "duration"
+              "duration",
+              "engagedVisits",
+              "engagementRate",
+              "newVisitors",
+              "returningVisitors"
             ],
             "properties": {
               "visitors": {
@@ -1969,11 +5337,26 @@
                 "type": "integer"
               },
               "bounceRate": {
-                "type": "number"
+                "type": "number",
+                "description": "GA4's: the share of visits that were not engaged."
               },
               "duration": {
                 "type": "integer",
                 "description": "Average visit, in seconds."
+              },
+              "engagedVisits": {
+                "type": "integer",
+                "description": "Visits longer than 10 seconds, with two page views or more, or that reached a goal."
+              },
+              "engagementRate": {
+                "type": "number"
+              },
+              "newVisitors": {
+                "type": "integer",
+                "description": "Visitors whose visit in the period was their first."
+              },
+              "returningVisitors": {
+                "type": "integer"
               }
             }
           },
@@ -2296,7 +5679,9 @@
                 "path",
                 "event",
                 "visits",
-                "rate"
+                "rate",
+                "download",
+                "value"
               ],
               "properties": {
                 "name": {
@@ -2319,9 +5704,61 @@
                 },
                 "rate": {
                   "type": "number"
+                },
+                "download": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "value": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "description": "What the conversions were worth in the site's currency: the goal's amount times its conversions, or the sum of its events' property. Null without a value."
                 }
               }
             }
+          },
+          "channels": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "channel",
+                "visits",
+                "visitors"
+              ],
+              "properties": {
+                "channel": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "visits": {
+                  "type": "integer"
+                },
+                "visitors": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "annotations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Annotation"
+            }
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The end of the period: the start of the day after its last."
+          },
+          "compare": {
+            "$ref": "#/components/schemas/Comparison"
           }
         }
       },
@@ -2346,7 +5783,19 @@
           "os",
           "device",
           "replay",
-          "rage"
+          "rage",
+          "referrerUrl",
+          "channel",
+          "browserVersion",
+          "osVersion",
+          "language",
+          "timezone",
+          "screen",
+          "country",
+          "region",
+          "city",
+          "returning",
+          "engaged"
         ],
         "properties": {
           "id": {
@@ -2411,7 +5860,9 @@
             "required": [
               "source",
               "medium",
-              "campaign"
+              "campaign",
+              "term",
+              "content"
             ],
             "properties": {
               "source": {
@@ -2427,6 +5878,18 @@
                 ]
               },
               "campaign": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "term": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "content": {
                 "type": [
                   "string",
                   "null"
@@ -2450,6 +5913,101 @@
           "rage": {
             "type": "integer",
             "description": "Rage clicks: three clicks or more on the same element within a second."
+          },
+          "referrerUrl": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The referring page, without its query string; emails and tokens in its path masked."
+          },
+          "channel": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "ai",
+              "paid-search",
+              "organic-search",
+              "paid-social",
+              "social",
+              "email",
+              "affiliate",
+              "display",
+              "paid-other",
+              "referral",
+              "other",
+              "direct",
+              null
+            ]
+          },
+          "browserVersion": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The browser's major version."
+          },
+          "osVersion": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The system's version, as its user agent gives it."
+          },
+          "language": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Such as en-US."
+          },
+          "timezone": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Such as Europe/Istanbul."
+          },
+          "screen": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Such as 1920x1080."
+          },
+          "country": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "ISO 3166-1 alpha-2, from the IP address, which is not kept."
+          },
+          "region": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "In English."
+          },
+          "city": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "In English."
+          },
+          "returning": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the visitor had visited before; null for visits from before this was kept."
+          },
+          "engaged": {
+            "type": "boolean",
+            "description": "Engaged as GA4 counts it: longer than 10 seconds, two page views or more, or a goal reached."
           }
         }
       },
@@ -2492,7 +6050,19 @@
           "kind",
           "action",
           "filled",
-          "again"
+          "again",
+          "search",
+          "notFound",
+          "referrer",
+          "link",
+          "rage",
+          "dead",
+          "lcp",
+          "inp",
+          "cls",
+          "noResults",
+          "value",
+          "order"
         ],
         "properties": {
           "type": {
@@ -2623,6 +6193,77 @@
               "boolean",
               "null"
             ]
+          },
+          "search": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "pageview: what was searched on the site."
+          },
+          "notFound": {
+            "type": "boolean",
+            "description": "pageview: the page was not found."
+          },
+          "referrer": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "pageview not found: the page that linked to it."
+          },
+          "link": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "outbound",
+              "download",
+              null
+            ],
+            "description": "click: a link out of the site, or a download."
+          },
+          "rage": {
+            "type": "boolean",
+            "description": "click: the third of three quick clicks on the element."
+          },
+          "dead": {
+            "type": "boolean",
+            "description": "click: nothing changed on the page."
+          },
+          "lcp": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "inp": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "cls": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "noResults": {
+            "type": "boolean"
+          },
+          "value": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "order": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -2676,7 +6317,8 @@
                 {
                   "type": "object",
                   "required": [
-                    "recording"
+                    "recording",
+                    "orders"
                   ],
                   "properties": {
                     "recording": {
@@ -2685,6 +6327,49 @@
                         "type": "object"
                       },
                       "description": "The visit's replay as rrweb events; empty without one."
+                    },
+                    "orders": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "order",
+                          "at",
+                          "value",
+                          "items",
+                          "refundedAt",
+                          "refunded"
+                        ],
+                        "properties": {
+                          "order": {
+                            "type": "string"
+                          },
+                          "at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "value": {
+                            "type": "number"
+                          },
+                          "items": {
+                            "type": "integer"
+                          },
+                          "refundedAt": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "format": "date-time"
+                          },
+                          "refunded": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          }
+                        }
+                      },
+                      "description": "The visit's orders."
                     }
                   }
                 }
@@ -2724,7 +6409,8 @@
           "site",
           "days",
           "from",
-          "funnels"
+          "funnels",
+          "to"
         ],
         "properties": {
           "site": {
@@ -2810,6 +6496,14 @@
                 }
               }
             }
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The end of the period: the start of the day after its last."
+          },
+          "compare": {
+            "$ref": "#/components/schemas/Comparison"
           }
         }
       },
@@ -2820,7 +6514,8 @@
           "days",
           "from",
           "enabled",
-          "forms"
+          "forms",
+          "to"
         ],
         "properties": {
           "site": {
@@ -2925,6 +6620,14 @@
                 }
               }
             }
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The end of the period: the start of the day after its last."
+          },
+          "compare": {
+            "$ref": "#/components/schemas/Comparison"
           }
         }
       },
@@ -2942,7 +6645,8 @@
           "elements",
           "points",
           "scroll",
-          "pages"
+          "pages",
+          "to"
         ],
         "properties": {
           "site": {
@@ -3078,6 +6782,14 @@
                 }
               }
             }
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The end of the period: the start of the day after its last."
+          },
+          "compare": {
+            "$ref": "#/components/schemas/Comparison"
           }
         }
       },
@@ -3125,6 +6837,2856 @@
                 }
               }
             }
+          }
+        }
+      },
+      "Comparison": {
+        "type": "object",
+        "required": [
+          "period",
+          "from",
+          "to"
+        ],
+        "description": "The same report for the period compared with: the fields of the report it is in, but site and days.",
+        "properties": {
+          "period": {
+            "type": "string",
+            "enum": [
+              "previous",
+              "year"
+            ]
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "Annotation": {
+        "type": "object",
+        "required": [
+          "id",
+          "site",
+          "date",
+          "text",
+          "createdAt",
+          "createdBy"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "site": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string",
+            "format": "date"
+          },
+          "text": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "createdBy": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The member or API token that added it."
+          }
+        }
+      },
+      "AnnotationList": {
+        "type": "object",
+        "required": [
+          "site",
+          "annotations"
+        ],
+        "properties": {
+          "site": {
+            "type": "string"
+          },
+          "annotations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Annotation"
+            }
+          }
+        }
+      },
+      "NewAnnotation": {
+        "type": "object",
+        "required": [
+          "date",
+          "text"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "date": {
+            "type": "string",
+            "format": "date",
+            "description": "The day it is about, such as 2026-11-08."
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 280
+          }
+        }
+      },
+      "Breakdown": {
+        "type": "object",
+        "required": [
+          "site",
+          "days",
+          "from",
+          "to",
+          "dimension",
+          "rows"
+        ],
+        "properties": {
+          "site": {
+            "type": "string"
+          },
+          "days": {
+            "type": "integer",
+            "enum": [
+              1,
+              7,
+              30,
+              90
+            ]
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "dimension": {
+            "type": "string",
+            "enum": [
+              "channel",
+              "source",
+              "referrer",
+              "utmSource",
+              "utmMedium",
+              "utmCampaign",
+              "utmTerm",
+              "utmContent",
+              "entry",
+              "exit",
+              "browser",
+              "browserVersion",
+              "os",
+              "osVersion",
+              "device",
+              "country",
+              "region",
+              "city",
+              "language",
+              "timezone",
+              "screen",
+              "visitorType",
+              "page",
+              "event",
+              "search",
+              "notFound",
+              "outbound",
+              "download"
+            ]
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "value",
+                "group",
+                "visitors",
+                "visits",
+                "count",
+                "engagementRate",
+                "duration"
+              ],
+              "properties": {
+                "value": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "The dimension's value; null for visits without one."
+                },
+                "group": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "What the value belongs to: the browser of a version, the system of a version, the country of a region, the region and country of a city, the page that linked to a page not found."
+                },
+                "visitors": {
+                  "type": "integer"
+                },
+                "visits": {
+                  "type": "integer"
+                },
+                "count": {
+                  "type": "integer",
+                  "description": "Page views of the visits, for a dimension of a visit; the page views, events, searches or clicks themselves otherwise."
+                },
+                "engagementRate": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "description": "For a dimension of a visit."
+                },
+                "duration": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "description": "Average visit in seconds, for a dimension of a visit."
+                }
+              }
+            }
+          },
+          "compare": {
+            "$ref": "#/components/schemas/Comparison"
+          }
+        }
+      },
+      "Vitals": {
+        "type": "object",
+        "required": [
+          "site",
+          "days",
+          "from",
+          "to",
+          "thresholds",
+          "totals",
+          "devices",
+          "pages",
+          "series"
+        ],
+        "properties": {
+          "site": {
+            "type": "string"
+          },
+          "days": {
+            "type": "integer",
+            "enum": [
+              1,
+              7,
+              30,
+              90
+            ]
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "thresholds": {
+            "type": "object",
+            "description": "Good up to the first value, poor over the second: LCP and INP in milliseconds, CLS as a score.",
+            "required": [
+              "lcp",
+              "inp",
+              "cls"
+            ],
+            "properties": {
+              "lcp": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 2,
+                "maxItems": 2
+              },
+              "inp": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 2,
+                "maxItems": 2
+              },
+              "cls": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 2,
+                "maxItems": 2
+              }
+            }
+          },
+          "totals": {
+            "type": "object",
+            "required": [
+              "samples",
+              "lcp",
+              "inp",
+              "cls"
+            ],
+            "properties": {
+              "samples": {
+                "type": "integer"
+              },
+              "lcp": {
+                "type": "object",
+                "required": [
+                  "p75",
+                  "samples",
+                  "good",
+                  "poor"
+                ],
+                "properties": {
+                  "p75": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "description": "75th percentile, by nearest rank."
+                  },
+                  "samples": {
+                    "type": "integer"
+                  },
+                  "good": {
+                    "type": "number",
+                    "description": "Share of samples at or under the good threshold."
+                  },
+                  "poor": {
+                    "type": "number",
+                    "description": "Share of samples over the poor threshold."
+                  }
+                }
+              },
+              "inp": {
+                "type": "object",
+                "required": [
+                  "p75",
+                  "samples",
+                  "good",
+                  "poor"
+                ],
+                "properties": {
+                  "p75": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "description": "75th percentile, by nearest rank."
+                  },
+                  "samples": {
+                    "type": "integer"
+                  },
+                  "good": {
+                    "type": "number",
+                    "description": "Share of samples at or under the good threshold."
+                  },
+                  "poor": {
+                    "type": "number",
+                    "description": "Share of samples over the poor threshold."
+                  }
+                }
+              },
+              "cls": {
+                "type": "object",
+                "required": [
+                  "p75",
+                  "samples",
+                  "good",
+                  "poor"
+                ],
+                "properties": {
+                  "p75": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "description": "75th percentile, by nearest rank."
+                  },
+                  "samples": {
+                    "type": "integer"
+                  },
+                  "good": {
+                    "type": "number",
+                    "description": "Share of samples at or under the good threshold."
+                  },
+                  "poor": {
+                    "type": "number",
+                    "description": "Share of samples over the poor threshold."
+                  }
+                }
+              }
+            }
+          },
+          "devices": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "samples",
+                "lcp",
+                "inp",
+                "cls",
+                "device"
+              ],
+              "properties": {
+                "device": {
+                  "type": "string"
+                },
+                "samples": {
+                  "type": "integer"
+                },
+                "lcp": {
+                  "type": "object",
+                  "required": [
+                    "p75",
+                    "samples",
+                    "good",
+                    "poor"
+                  ],
+                  "properties": {
+                    "p75": {
+                      "type": [
+                        "number",
+                        "null"
+                      ],
+                      "description": "75th percentile, by nearest rank."
+                    },
+                    "samples": {
+                      "type": "integer"
+                    },
+                    "good": {
+                      "type": "number",
+                      "description": "Share of samples at or under the good threshold."
+                    },
+                    "poor": {
+                      "type": "number",
+                      "description": "Share of samples over the poor threshold."
+                    }
+                  }
+                },
+                "inp": {
+                  "type": "object",
+                  "required": [
+                    "p75",
+                    "samples",
+                    "good",
+                    "poor"
+                  ],
+                  "properties": {
+                    "p75": {
+                      "type": [
+                        "number",
+                        "null"
+                      ],
+                      "description": "75th percentile, by nearest rank."
+                    },
+                    "samples": {
+                      "type": "integer"
+                    },
+                    "good": {
+                      "type": "number",
+                      "description": "Share of samples at or under the good threshold."
+                    },
+                    "poor": {
+                      "type": "number",
+                      "description": "Share of samples over the poor threshold."
+                    }
+                  }
+                },
+                "cls": {
+                  "type": "object",
+                  "required": [
+                    "p75",
+                    "samples",
+                    "good",
+                    "poor"
+                  ],
+                  "properties": {
+                    "p75": {
+                      "type": [
+                        "number",
+                        "null"
+                      ],
+                      "description": "75th percentile, by nearest rank."
+                    },
+                    "samples": {
+                      "type": "integer"
+                    },
+                    "good": {
+                      "type": "number",
+                      "description": "Share of samples at or under the good threshold."
+                    },
+                    "poor": {
+                      "type": "number",
+                      "description": "Share of samples over the poor threshold."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "pages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "path",
+                "device",
+                "samples",
+                "lcp",
+                "inp",
+                "cls"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "device": {
+                  "type": "string"
+                },
+                "samples": {
+                  "type": "integer"
+                },
+                "lcp": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "inp": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "cls": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                }
+              }
+            }
+          },
+          "compare": {
+            "$ref": "#/components/schemas/Comparison"
+          },
+          "series": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "day",
+                "samples",
+                "lcp",
+                "inp",
+                "cls"
+              ],
+              "properties": {
+                "day": {
+                  "type": "string"
+                },
+                "samples": {
+                  "type": "integer"
+                },
+                "lcp": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "inp": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "cls": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                }
+              }
+            },
+            "description": "The 75th percentile of each day, all devices."
+          }
+        }
+      },
+      "Frustration": {
+        "type": "object",
+        "required": [
+          "site",
+          "days",
+          "from",
+          "to",
+          "totals",
+          "pages",
+          "elements"
+        ],
+        "properties": {
+          "site": {
+            "type": "string"
+          },
+          "days": {
+            "type": "integer",
+            "enum": [
+              1,
+              7,
+              30,
+              90
+            ]
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "totals": {
+            "type": "object",
+            "required": [
+              "clicks",
+              "rage",
+              "dead",
+              "rageVisits",
+              "deadVisits"
+            ],
+            "properties": {
+              "clicks": {
+                "type": "integer"
+              },
+              "rage": {
+                "type": "integer",
+                "description": "Rage clicks: three or more clicks on one element within a second, counted once a burst."
+              },
+              "dead": {
+                "type": "integer",
+                "description": "Clicks after which nothing changed on the page within a second."
+              },
+              "rageVisits": {
+                "type": "integer"
+              },
+              "deadVisits": {
+                "type": "integer"
+              }
+            }
+          },
+          "pages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "path",
+                "clicks",
+                "rage",
+                "dead",
+                "visits"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "clicks": {
+                  "type": "integer"
+                },
+                "rage": {
+                  "type": "integer"
+                },
+                "dead": {
+                  "type": "integer"
+                },
+                "visits": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "elements": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "path",
+                "target",
+                "text",
+                "rage",
+                "dead",
+                "visitors"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "target": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "text": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "rage": {
+                  "type": "integer"
+                },
+                "dead": {
+                  "type": "integer"
+                },
+                "visitors": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "compare": {
+            "$ref": "#/components/schemas/Comparison"
+          }
+        }
+      },
+      "Realtime": {
+        "type": "object",
+        "required": [
+          "site",
+          "at",
+          "visitors",
+          "visits",
+          "pageviews",
+          "pages",
+          "channels",
+          "sources",
+          "countries",
+          "devices",
+          "minutes",
+          "goals",
+          "feed"
+        ],
+        "properties": {
+          "site": {
+            "type": "string"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "visitors": {
+            "type": "integer",
+            "description": "Visitors active in the last five minutes."
+          },
+          "visits": {
+            "type": "integer"
+          },
+          "pageviews": {
+            "type": "integer",
+            "description": "Page views in the last five minutes."
+          },
+          "pages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "path",
+                "visitors"
+              ],
+              "properties": {
+                "path": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "visitors": {
+                  "type": "integer"
+                }
+              }
+            },
+            "description": "The page each active visit is on: the last it viewed."
+          },
+          "channels": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "channel",
+                "visitors"
+              ],
+              "properties": {
+                "channel": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "visitors": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "source",
+                "visitors"
+              ],
+              "properties": {
+                "source": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "visitors": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "countries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "country",
+                "visitors"
+              ],
+              "properties": {
+                "country": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "visitors": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "devices": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "device",
+                "visitors"
+              ],
+              "properties": {
+                "device": {
+                  "type": "string"
+                },
+                "visitors": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "minutes": {
+            "type": "array",
+            "description": "Page views in each of the last 30 minutes, oldest first.",
+            "items": {
+              "type": "object",
+              "required": [
+                "minute",
+                "pageviews"
+              ],
+              "properties": {
+                "minute": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "pageviews": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "goals": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "visits"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "visits": {
+                  "type": "integer"
+                }
+              }
+            },
+            "description": "Visits that reached each goal in the last 30 minutes."
+          },
+          "feed": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "at",
+                "kind",
+                "visit",
+                "path",
+                "name",
+                "file",
+                "value",
+                "source",
+                "country",
+                "city"
+              ],
+              "properties": {
+                "at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "visit",
+                    "page",
+                    "event",
+                    "download",
+                    "goal"
+                  ]
+                },
+                "visit": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "file": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "value": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "source": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "country": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "city": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            },
+            "description": "The latest of the last 30 minutes, newest first: visits arriving, pages, the site's events, downloads and goals."
+          }
+        }
+      },
+      "Ecommerce": {
+        "type": "object",
+        "required": [
+          "site",
+          "days",
+          "from",
+          "to",
+          "enabled",
+          "currency",
+          "totals",
+          "series",
+          "funnel",
+          "products",
+          "sources",
+          "campaigns",
+          "channels"
+        ],
+        "properties": {
+          "site": {
+            "type": "string"
+          },
+          "days": {
+            "type": "integer",
+            "enum": [
+              1,
+              7,
+              30,
+              90
+            ]
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "currency": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "totals": {
+            "type": "object",
+            "required": [
+              "revenue",
+              "orders",
+              "averageOrder",
+              "units",
+              "buyingVisits",
+              "conversionRate",
+              "visits",
+              "refunds",
+              "refunded"
+            ],
+            "properties": {
+              "revenue": {
+                "type": "number"
+              },
+              "orders": {
+                "type": "integer"
+              },
+              "averageOrder": {
+                "type": "number"
+              },
+              "units": {
+                "type": "integer"
+              },
+              "buyingVisits": {
+                "type": "integer"
+              },
+              "conversionRate": {
+                "type": "number"
+              },
+              "visits": {
+                "type": "integer"
+              },
+              "refunds": {
+                "type": "integer"
+              },
+              "refunded": {
+                "type": "number"
+              }
+            }
+          },
+          "series": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "day",
+                "orders",
+                "revenue"
+              ],
+              "properties": {
+                "day": {
+                  "type": "string"
+                },
+                "orders": {
+                  "type": "integer"
+                },
+                "revenue": {
+                  "type": "number"
+                }
+              }
+            }
+          },
+          "funnel": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "event",
+                "visits"
+              ],
+              "properties": {
+                "event": {
+                  "type": "string",
+                  "enum": [
+                    "view_item",
+                    "add_to_cart",
+                    "begin_checkout",
+                    "purchase"
+                  ]
+                },
+                "visits": {
+                  "type": "integer"
+                }
+              }
+            },
+            "description": "Visits that sent each event having sent the ones before it, in order."
+          },
+          "products": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "sku",
+                "name",
+                "category",
+                "views",
+                "carts",
+                "units",
+                "revenue",
+                "refunded"
+              ],
+              "properties": {
+                "sku": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "category": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "views": {
+                  "type": "integer"
+                },
+                "carts": {
+                  "type": "integer"
+                },
+                "units": {
+                  "type": "integer"
+                },
+                "revenue": {
+                  "type": "number"
+                },
+                "refunded": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "source",
+                "visits",
+                "orders",
+                "revenue"
+              ],
+              "properties": {
+                "source": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "visits": {
+                  "type": "integer"
+                },
+                "orders": {
+                  "type": "integer"
+                },
+                "revenue": {
+                  "type": "number"
+                }
+              }
+            }
+          },
+          "campaigns": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "campaign",
+                "visits",
+                "orders",
+                "revenue"
+              ],
+              "properties": {
+                "campaign": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "visits": {
+                  "type": "integer"
+                },
+                "orders": {
+                  "type": "integer"
+                },
+                "revenue": {
+                  "type": "number"
+                }
+              }
+            }
+          },
+          "channels": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "channel",
+                "visits",
+                "orders",
+                "revenue"
+              ],
+              "properties": {
+                "channel": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "visits": {
+                  "type": "integer"
+                },
+                "orders": {
+                  "type": "integer"
+                },
+                "revenue": {
+                  "type": "number"
+                }
+              }
+            }
+          },
+          "compare": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Comparison"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "currency": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "totals": {
+                    "type": "object",
+                    "required": [
+                      "revenue",
+                      "orders",
+                      "averageOrder",
+                      "units",
+                      "buyingVisits",
+                      "conversionRate",
+                      "visits",
+                      "refunds",
+                      "refunded"
+                    ],
+                    "properties": {
+                      "revenue": {
+                        "type": "number"
+                      },
+                      "orders": {
+                        "type": "integer"
+                      },
+                      "averageOrder": {
+                        "type": "number"
+                      },
+                      "units": {
+                        "type": "integer"
+                      },
+                      "buyingVisits": {
+                        "type": "integer"
+                      },
+                      "conversionRate": {
+                        "type": "number"
+                      },
+                      "visits": {
+                        "type": "integer"
+                      },
+                      "refunds": {
+                        "type": "integer"
+                      },
+                      "refunded": {
+                        "type": "number"
+                      }
+                    }
+                  },
+                  "series": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "day",
+                        "orders",
+                        "revenue"
+                      ],
+                      "properties": {
+                        "day": {
+                          "type": "string"
+                        },
+                        "orders": {
+                          "type": "integer"
+                        },
+                        "revenue": {
+                          "type": "number"
+                        }
+                      }
+                    }
+                  },
+                  "funnel": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "event",
+                        "visits"
+                      ],
+                      "properties": {
+                        "event": {
+                          "type": "string",
+                          "enum": [
+                            "view_item",
+                            "add_to_cart",
+                            "begin_checkout",
+                            "purchase"
+                          ]
+                        },
+                        "visits": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "description": "Visits that sent each event having sent the ones before it, in order."
+                  },
+                  "products": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "sku",
+                        "name",
+                        "category",
+                        "views",
+                        "carts",
+                        "units",
+                        "revenue",
+                        "refunded"
+                      ],
+                      "properties": {
+                        "sku": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "category": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "views": {
+                          "type": "integer"
+                        },
+                        "carts": {
+                          "type": "integer"
+                        },
+                        "units": {
+                          "type": "integer"
+                        },
+                        "revenue": {
+                          "type": "number"
+                        },
+                        "refunded": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  },
+                  "sources": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "source",
+                        "visits",
+                        "orders",
+                        "revenue"
+                      ],
+                      "properties": {
+                        "source": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "visits": {
+                          "type": "integer"
+                        },
+                        "orders": {
+                          "type": "integer"
+                        },
+                        "revenue": {
+                          "type": "number"
+                        }
+                      }
+                    }
+                  },
+                  "campaigns": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "campaign",
+                        "visits",
+                        "orders",
+                        "revenue"
+                      ],
+                      "properties": {
+                        "campaign": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "visits": {
+                          "type": "integer"
+                        },
+                        "orders": {
+                          "type": "integer"
+                        },
+                        "revenue": {
+                          "type": "number"
+                        }
+                      }
+                    }
+                  },
+                  "channels": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "channel",
+                        "visits",
+                        "orders",
+                        "revenue"
+                      ],
+                      "properties": {
+                        "channel": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "visits": {
+                          "type": "integer"
+                        },
+                        "orders": {
+                          "type": "integer"
+                        },
+                        "revenue": {
+                          "type": "number"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "description": "Revenue is credited to the visit that bought (last touch)."
+      },
+      "Attribution": {
+        "type": "object",
+        "required": [
+          "site",
+          "days",
+          "from",
+          "to",
+          "goal",
+          "by",
+          "lookback",
+          "currency",
+          "hasValue",
+          "conversions",
+          "medianVisits",
+          "rows"
+        ],
+        "properties": {
+          "site": {
+            "type": "string"
+          },
+          "days": {
+            "type": "integer",
+            "enum": [
+              1,
+              7,
+              30,
+              90
+            ]
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "goal": {
+            "type": "string"
+          },
+          "by": {
+            "type": "string",
+            "enum": [
+              "channel",
+              "source",
+              "campaign"
+            ]
+          },
+          "lookback": {
+            "type": "integer"
+          },
+          "currency": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "hasValue": {
+            "type": "boolean"
+          },
+          "conversions": {
+            "type": "integer"
+          },
+          "medianVisits": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "value",
+                "first",
+                "last",
+                "linear",
+                "firstValue",
+                "lastValue",
+                "linearValue"
+              ],
+              "properties": {
+                "value": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "first": {
+                  "type": "number"
+                },
+                "last": {
+                  "type": "number"
+                },
+                "linear": {
+                  "type": "number"
+                },
+                "firstValue": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "lastValue": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "linearValue": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                }
+              }
+            }
+          },
+          "compare": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Comparison"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "goal": {
+                    "type": "string"
+                  },
+                  "by": {
+                    "type": "string",
+                    "enum": [
+                      "channel",
+                      "source",
+                      "campaign"
+                    ]
+                  },
+                  "lookback": {
+                    "type": "integer"
+                  },
+                  "currency": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "hasValue": {
+                    "type": "boolean"
+                  },
+                  "conversions": {
+                    "type": "integer"
+                  },
+                  "medianVisits": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "rows": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "value",
+                        "first",
+                        "last",
+                        "linear",
+                        "firstValue",
+                        "lastValue",
+                        "linearValue"
+                      ],
+                      "properties": {
+                        "value": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "first": {
+                          "type": "number"
+                        },
+                        "last": {
+                          "type": "number"
+                        },
+                        "linear": {
+                          "type": "number"
+                        },
+                        "firstValue": {
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        },
+                        "lastValue": {
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        },
+                        "linearValue": {
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "Paths": {
+        "type": "object",
+        "required": [
+          "site",
+          "days",
+          "from",
+          "to",
+          "page",
+          "direction",
+          "steps",
+          "visits",
+          "nodes",
+          "links"
+        ],
+        "properties": {
+          "site": {
+            "type": "string"
+          },
+          "days": {
+            "type": "integer",
+            "enum": [
+              1,
+              7,
+              30,
+              90
+            ]
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "page": {
+            "type": "string"
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "from",
+              "to"
+            ]
+          },
+          "steps": {
+            "type": "integer"
+          },
+          "visits": {
+            "type": "integer"
+          },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "path",
+                "column",
+                "visits",
+                "exit",
+                "other"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "column": {
+                  "type": "integer"
+                },
+                "visits": {
+                  "type": "integer"
+                },
+                "exit": {
+                  "type": "boolean"
+                },
+                "other": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "description": "Column 0 is the page; each next column a step on (from) or back (to). exit: the visits that left (from) or started their visit (to) there; other: the step's other pages."
+          },
+          "links": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "from",
+                "to",
+                "visits"
+              ],
+              "properties": {
+                "from": {
+                  "type": "string"
+                },
+                "to": {
+                  "type": "string"
+                },
+                "visits": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "compare": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Comparison"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "page": {
+                    "type": "string"
+                  },
+                  "direction": {
+                    "type": "string",
+                    "enum": [
+                      "from",
+                      "to"
+                    ]
+                  },
+                  "steps": {
+                    "type": "integer"
+                  },
+                  "visits": {
+                    "type": "integer"
+                  },
+                  "nodes": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "path",
+                        "column",
+                        "visits",
+                        "exit",
+                        "other"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "path": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "column": {
+                          "type": "integer"
+                        },
+                        "visits": {
+                          "type": "integer"
+                        },
+                        "exit": {
+                          "type": "boolean"
+                        },
+                        "other": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "description": "Column 0 is the page; each next column a step on (from) or back (to). exit: the visits that left (from) or started their visit (to) there; other: the step's other pages."
+                  },
+                  "links": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "from",
+                        "to",
+                        "visits"
+                      ],
+                      "properties": {
+                        "from": {
+                          "type": "string"
+                        },
+                        "to": {
+                          "type": "string"
+                        },
+                        "visits": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "Retention": {
+        "type": "object",
+        "required": [
+          "site",
+          "weeks",
+          "days",
+          "cohorts",
+          "lifecycle",
+          "stickiness"
+        ],
+        "properties": {
+          "site": {
+            "type": "string"
+          },
+          "weeks": {
+            "type": "integer"
+          },
+          "days": {
+            "type": "integer"
+          },
+          "cohorts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "week",
+                "visitors",
+                "counts",
+                "shares"
+              ],
+              "properties": {
+                "week": {
+                  "type": "string"
+                },
+                "visitors": {
+                  "type": "integer"
+                },
+                "counts": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  }
+                },
+                "shares": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  }
+                }
+              }
+            },
+            "description": "Visitors first seen in each week (Monday, UTC), and how many of them came in it and in each week after."
+          },
+          "lifecycle": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "week",
+                "new",
+                "returning",
+                "resurrected",
+                "dormant"
+              ],
+              "properties": {
+                "week": {
+                  "type": "string"
+                },
+                "new": {
+                  "type": "integer"
+                },
+                "returning": {
+                  "type": "integer"
+                },
+                "resurrected": {
+                  "type": "integer"
+                },
+                "dormant": {
+                  "type": "integer"
+                }
+              }
+            },
+            "description": "returning: came in the four weeks before; resurrected: seen before, but not in those four weeks; dormant: came the week before, not this one."
+          },
+          "stickiness": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "day",
+                "dau",
+                "wau",
+                "mau"
+              ],
+              "properties": {
+                "day": {
+                  "type": "string"
+                },
+                "dau": {
+                  "type": "integer"
+                },
+                "wau": {
+                  "type": "integer"
+                },
+                "mau": {
+                  "type": "integer"
+                }
+              }
+            },
+            "description": "Visitors that came on the day, and in the 7 and 30 days ending it."
+          }
+        }
+      },
+      "SiteSearch": {
+        "type": "object",
+        "required": [
+          "site",
+          "days",
+          "from",
+          "to",
+          "enabled",
+          "totals",
+          "terms"
+        ],
+        "properties": {
+          "site": {
+            "type": "string"
+          },
+          "days": {
+            "type": "integer",
+            "enum": [
+              1,
+              7,
+              30,
+              90
+            ]
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "totals": {
+            "type": "object",
+            "required": [
+              "searches",
+              "terms",
+              "visits",
+              "visitShare",
+              "noResults",
+              "clicked",
+              "left"
+            ],
+            "properties": {
+              "searches": {
+                "type": "integer"
+              },
+              "terms": {
+                "type": "integer"
+              },
+              "visits": {
+                "type": "integer"
+              },
+              "visitShare": {
+                "type": "number"
+              },
+              "noResults": {
+                "type": "integer"
+              },
+              "clicked": {
+                "type": "number"
+              },
+              "left": {
+                "type": "number"
+              }
+            }
+          },
+          "terms": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "term",
+                "searches",
+                "visits",
+                "noResults",
+                "clicked",
+                "refined",
+                "left"
+              ],
+              "properties": {
+                "term": {
+                  "type": "string"
+                },
+                "searches": {
+                  "type": "integer"
+                },
+                "visits": {
+                  "type": "integer"
+                },
+                "noResults": {
+                  "type": "integer"
+                },
+                "clicked": {
+                  "type": "number"
+                },
+                "refined": {
+                  "type": "number"
+                },
+                "left": {
+                  "type": "number"
+                }
+              }
+            },
+            "description": "clicked: the share of searches followed by another page; refined: by another search; left: the visit ended there."
+          },
+          "compare": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Comparison"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "totals": {
+                    "type": "object",
+                    "required": [
+                      "searches",
+                      "terms",
+                      "visits",
+                      "visitShare",
+                      "noResults",
+                      "clicked",
+                      "left"
+                    ],
+                    "properties": {
+                      "searches": {
+                        "type": "integer"
+                      },
+                      "terms": {
+                        "type": "integer"
+                      },
+                      "visits": {
+                        "type": "integer"
+                      },
+                      "visitShare": {
+                        "type": "number"
+                      },
+                      "noResults": {
+                        "type": "integer"
+                      },
+                      "clicked": {
+                        "type": "number"
+                      },
+                      "left": {
+                        "type": "number"
+                      }
+                    }
+                  },
+                  "terms": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "term",
+                        "searches",
+                        "visits",
+                        "noResults",
+                        "clicked",
+                        "refined",
+                        "left"
+                      ],
+                      "properties": {
+                        "term": {
+                          "type": "string"
+                        },
+                        "searches": {
+                          "type": "integer"
+                        },
+                        "visits": {
+                          "type": "integer"
+                        },
+                        "noResults": {
+                          "type": "integer"
+                        },
+                        "clicked": {
+                          "type": "number"
+                        },
+                        "refined": {
+                          "type": "number"
+                        },
+                        "left": {
+                          "type": "number"
+                        }
+                      }
+                    },
+                    "description": "clicked: the share of searches followed by another page; refined: by another search; left: the visit ended there."
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "SearchConsole": {
+        "type": "object",
+        "required": [
+          "site",
+          "days",
+          "from",
+          "to",
+          "engine",
+          "engines",
+          "totals",
+          "hidden",
+          "queries",
+          "pages"
+        ],
+        "properties": {
+          "site": {
+            "type": "string"
+          },
+          "days": {
+            "type": "integer",
+            "enum": [
+              1,
+              7,
+              30,
+              90
+            ]
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "engine": {
+            "type": "string",
+            "enum": [
+              "google",
+              "bing",
+              "yandex"
+            ]
+          },
+          "engines": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "engine",
+                "property",
+                "missing",
+                "importedUntil",
+                "importedAt",
+                "error"
+              ],
+              "properties": {
+                "engine": {
+                  "type": "string"
+                },
+                "property": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "missing": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "importedUntil": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "importedAt": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "error": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            },
+            "description": "Each engine: the site's property, the variables to set when its key is missing, and the last import."
+          },
+          "totals": {
+            "type": "object",
+            "required": [
+              "clicks",
+              "impressions",
+              "ctr",
+              "position"
+            ],
+            "properties": {
+              "clicks": {
+                "type": "integer"
+              },
+              "impressions": {
+                "type": "integer"
+              },
+              "ctr": {
+                "type": "number"
+              },
+              "position": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            }
+          },
+          "hidden": {
+            "type": "integer",
+            "description": "Clicks from queries the engine keeps private."
+          },
+          "queries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "query",
+                "page",
+                "clicks",
+                "impressions",
+                "ctr",
+                "position"
+              ],
+              "properties": {
+                "query": {
+                  "type": "string"
+                },
+                "page": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "clicks": {
+                  "type": "integer"
+                },
+                "impressions": {
+                  "type": "integer"
+                },
+                "ctr": {
+                  "type": "number"
+                },
+                "position": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                }
+              }
+            }
+          },
+          "pages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "page",
+                "path",
+                "clicks",
+                "impressions",
+                "ctr",
+                "position",
+                "entries",
+                "bounceRate"
+              ],
+              "properties": {
+                "page": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "clicks": {
+                  "type": "integer"
+                },
+                "impressions": {
+                  "type": "integer"
+                },
+                "ctr": {
+                  "type": "number"
+                },
+                "position": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "entries": {
+                  "type": "integer"
+                },
+                "bounceRate": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                }
+              }
+            }
+          },
+          "compare": {
+            "type": "object",
+            "required": [
+              "period",
+              "from",
+              "to",
+              "totals",
+              "hidden"
+            ],
+            "properties": {
+              "period": {
+                "type": "string",
+                "enum": [
+                  "previous",
+                  "year"
+                ]
+              },
+              "from": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "to": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "totals": {
+                "type": "object",
+                "required": [
+                  "clicks",
+                  "impressions",
+                  "ctr",
+                  "position"
+                ],
+                "properties": {
+                  "clicks": {
+                    "type": "integer"
+                  },
+                  "impressions": {
+                    "type": "integer"
+                  },
+                  "ctr": {
+                    "type": "number"
+                  },
+                  "position": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  }
+                }
+              },
+              "hidden": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      "Segment": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "filters",
+          "shared",
+          "owner",
+          "mine",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "filters": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "dimension",
+                "op",
+                "values"
+              ],
+              "properties": {
+                "dimension": {
+                  "type": "string"
+                },
+                "op": {
+                  "type": "string",
+                  "enum": [
+                    "is",
+                    "not"
+                  ]
+                },
+                "values": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "shared": {
+            "type": "boolean"
+          },
+          "owner": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mine": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "EmailReport": {
+        "type": "object",
+        "required": [
+          "id",
+          "site",
+          "name",
+          "recipients",
+          "every",
+          "sections",
+          "segment",
+          "createdBy",
+          "createdAt",
+          "lastSentAt",
+          "lastError"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "site": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "recipients": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "every": {
+            "type": "string",
+            "enum": [
+              "daily",
+              "weekly",
+              "monthly"
+            ]
+          },
+          "sections": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "overview",
+                "acquisition",
+                "conversions",
+                "ecommerce",
+                "search",
+                "performance"
+              ]
+            }
+          },
+          "segment": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdBy": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lastSentAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "lastError": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Share": {
+        "type": "object",
+        "required": [
+          "id",
+          "site",
+          "name",
+          "sections",
+          "password",
+          "expiresAt",
+          "createdBy",
+          "createdAt",
+          "views",
+          "lastViewedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "site": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "sections": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "overview",
+                "acquisition",
+                "conversions",
+                "ecommerce",
+                "search",
+                "performance"
+              ]
+            }
+          },
+          "password": {
+            "type": "boolean"
+          },
+          "expiresAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "createdBy": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "views": {
+            "type": "integer"
+          },
+          "lastViewedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "AlertRule": {
+        "type": "object",
+        "required": [
+          "id",
+          "site",
+          "name",
+          "kind",
+          "ratio",
+          "recipients",
+          "webhook",
+          "enabled",
+          "createdBy",
+          "createdAt",
+          "open"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "site": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "drop",
+              "spike"
+            ]
+          },
+          "ratio": {
+            "type": "number"
+          },
+          "recipients": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "webhook": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "createdBy": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "open": {
+            "type": "boolean"
+          }
+        }
+      },
+      "Alert": {
+        "type": "object",
+        "required": [
+          "id",
+          "rule",
+          "name",
+          "site",
+          "hour",
+          "startedAt",
+          "endedAt",
+          "visits",
+          "usual",
+          "sent"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "rule": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "site": {
+            "type": "string"
+          },
+          "hour": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "endedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "visits": {
+            "type": "integer"
+          },
+          "usual": {
+            "type": "number"
+          },
+          "sent": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       }

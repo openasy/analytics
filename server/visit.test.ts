@@ -10,7 +10,9 @@ describe("addresses", () => {
       origin: "https://www.example.com",
       path: "/p",
       query: "?utm_source=news&utm_medium=email&q=shoes",
-      utm: { source: "news", medium: "email", campaign: null },
+      utm: { source: "news", medium: "email", campaign: null, term: null, content: null },
+      paidClick: false,
+      search: null,
     });
     expect(cleanUrl("https://www.example.com/")?.query).toBeNull();
     expect(cleanUrl("ftp://example.com/")).toBeNull();
@@ -44,6 +46,8 @@ describe("user agents", () => {
       browser: "Chrome",
       os: "macOS",
       device: "desktop",
+      browserVersion: "141",
+      osVersion: "10.15",
     });
     expect(
       agentOf("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"),
@@ -51,6 +55,8 @@ describe("user agents", () => {
       browser: "Safari",
       os: "iOS",
       device: "mobile",
+      browserVersion: "18",
+      osVersion: "18.0",
     });
     expect(agentOf("Mozilla/5.0 (Linux; Android 14; SM-X710) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Safari/537.36")).toMatchObject({
       os: "Android",
@@ -105,7 +111,7 @@ describe("batches", () => {
       [batch([]), /events is a list of 1 to 50/],
       [batch([{ type: "scroll", url: "https://a.example/" }]), /type is one of/],
       [batch([{ type: "pageview" }]), /url is required/],
-      [batch([{ type: "pageview", url: "https://a.example/", value: "secret" }]), /value is not part of an event/],
+      [batch([{ type: "pageview", url: "https://a.example/", value: "secret" }]), /value is part of an ecommerce event only/],
       [batch([{ type: "event", url: "https://a.example/", name: "bad name" }]), /name is up to 64/],
       [batch([{ type: "event", url: "https://a.example/", name: "x", props: { a: { b: 1 } } }]), /values are strings, numbers or booleans/],
       [batch([{ type: "leave", url: "https://a.example/", duration: -1 }]), /duration must be a number of 0 or more/],

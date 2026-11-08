@@ -1,30 +1,24 @@
 import {
   AppShell,
   Badge,
-  BarList,
   BrandProvider,
   Button,
   DataTable,
   Dialog,
-  DonutChart,
   EmptyState,
   KpiCard,
   KpiGrid,
   navigate,
-  OverviewGrid,
   PageHeader,
   Panel,
   PRODUCT_IDS,
   SearchInput,
-  SelectField,
   StatusBadge,
-  TimeSeriesChart,
   toLocale,
   usePath,
   useAgo,
   useLocalePreference,
   useThemePreference,
-  CHART_COLORS,
   type Column,
   type ProductId,
 } from "@openasy/ui";
@@ -35,42 +29,59 @@ import {
   Clock,
   Download,
   CirclePlay,
-  ClipboardList,
   Eye,
-  FileText,
+  FileCode,
   Flame,
-  Funnel,
+  Gauge,
   Globe,
   KeyRound,
   LayoutDashboard,
   LogIn,
   LogOut,
   MousePointerClick,
-  Radio,
   Share2,
+  Target,
   Trash2,
-  TrendingDown,
+  UserCog,
   UserRound,
   Users,
   Route as RouteIcon,
+  Repeat,
+  Search,
+  Send,
+  ShoppingCart,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { type ProductLink, type Report, type Site, type Summary, type Visit, type VisitDetail } from "./api.ts";
-import { Code, duration, nothing, percent, ReportHeader, shortDay, time, useApi, useChoice, useReport, type Call, type Choice } from "./common.tsx";
+import { AcquisitionPage } from "./acquisition.tsx";
+import { type ProductLink, type Site, type Summary, type Visit, type VisitDetail } from "./api.ts";
+import { BehaviorPage } from "./behavior.tsx";
+import { Code, duration, time, useApi } from "./common.tsx";
+import { ConversionsPage } from "./conversions.tsx";
+import { EcommercePage } from "./ecommerce.tsx";
+import { RetentionPage } from "./retention.tsx";
+import { SearchPage } from "./searchengines.tsx";
+import { SharedDashboard, SharingPage } from "./sharing.tsx";
+import { useFormat } from "./format.ts";
 import { useT } from "./i18n.ts";
-import { FormsPage, FunnelsPage, HeatmapsPage, ReplayPage, ReplaysPage } from "./insights.tsx";
+import { HeatmapsPage, ReplayPage, ReplaysPage } from "./insights.tsx";
+import { OverviewPage, RealtimePage } from "./overview.tsx";
+import { PerformancePage } from "./performance.tsx";
+import { Flag, Nothing, Report, ReportProvider, useReport } from "./report.tsx";
 import { search } from "./search.ts";
+import { SettingsFilePage } from "./settings.tsx";
+import { VisitorsPage } from "./visitors.tsx";
 
+/** Pages with tabs, each tab at /<page>/<tab>. */
+const TABBED = ["acquisition", "visitors", "behavior", "conversions", "ecommerce", "retention", "search", "sharing"] as const;
 const PAGES = [
-  "pages",
-  "sources",
-  "behavior",
-  "funnels",
-  "forms",
+  "realtime",
+  ...TABBED,
+  "performance",
   "heatmaps",
   "replays",
   "visits",
   "sites",
+  "settings",
   "setup",
   "account",
   "members",
@@ -78,306 +89,49 @@ const PAGES = [
   "tokens",
   "about",
 ] as const;
-type Route = { page: "overview" | (typeof PAGES)[number] } | { page: "visit" | "replay"; id: string };
+type Page = "overview" | (typeof PAGES)[number];
+type Route = { page: Page; tab?: string } | { page: "visit" | "replay"; id: string };
+/** Pages of the reports from before, and where they are now. */
+const MOVED: Record<string, string> = { pages: "/behavior", sources: "/acquisition/sources", funnels: "/conversions/funnels", forms: "/conversions/forms" };
 /** The first path segments that are pages of this UI, for followLinks. */
-export const PATHS = ["overview", ...PAGES];
+export const PATHS = ["overview", ...PAGES, ...Object.keys(MOVED)];
 function parseRoute(path: string): Route {
   const [page, id] = path.replace(/^\//, "").split("/");
   if (page === "visits" && id) return { page: "visit", id: decodeURIComponent(id) };
   if (page === "replays" && id) return { page: "replay", id: decodeURIComponent(id) };
-  if ((PAGES as readonly string[]).includes(page ?? "")) return { page: page as (typeof PAGES)[number] };
+  if ((PAGES as readonly string[]).includes(page ?? "")) return { page: page as Page, tab: id };
   return { page: "overview" };
-}
-
-// ---------------------------------------------------------------- Overview
-
-function OverviewPage({ call, sites, choice }: { call: Call; sites: Site[]; choice: Choice }) {
-  const t = useT();
-  const r = useReport(call, choice);
-  const devices: Record<string, string> = { desktop: t("device.desktop"), mobile: t("device.mobile"), tablet: t("device.tablet") };
-  return (
-    <>
-      <ReportHeader title={t("overview.title")} description={t("overview.description", { site: choice.site })} sites={sites} choice={choice} />
-      {r && (
-        <KpiGrid minWidth={150}>
-          <KpiCard label={t("overview.visitors")} value={r.totals.visitors} icon={Users} tone="info" trend={r.series.map((d) => d.visitors)} />
-          <KpiCard label={t("overview.visits")} value={r.totals.visits} icon={Activity} trend={r.series.map((d) => d.visits)} />
-          <KpiCard label={t("overview.pageviews")} value={r.totals.pageviews} icon={Eye} trend={r.series.map((d) => d.pageviews)} />
-          <KpiCard label={t("overview.bounceRate")} value={percent(r.totals.bounceRate)} icon={TrendingDown} />
-          <KpiCard label={t("overview.visitLength")} value={duration(r.totals.duration)} icon={Clock} />
-        </KpiGrid>
-      )}
-      {r && (
-        <Panel title={t("overview.overTime")} description={t("overview.overTimeDetail")}>
-          <TimeSeriesChart
-            label={t("overview.overTime")}
-            series={[
-              { id: "visitors", name: t("overview.visitors"), data: r.series.map((d) => d.visitors) },
-              { id: "pageviews", name: t("overview.pageviews"), data: r.series.map((d) => d.pageviews) },
-            ]}
-            labels={r.series.map((d) => shortDay(d.day))}
-            height={180}
-            xTicks={7}
-            area
-          />
-        </Panel>
-      )}
-      {r && (
-        <OverviewGrid layout="halves">
-          <Panel title={t("overview.topPages")} description={t("overview.topPagesDetail")} footer={<a href="/pages">{t("overview.allPages")}</a>}>
-            {r.pages.length ? (
-              <BarList
-                label={t("overview.topPages")}
-                items={r.pages.slice(0, 8).map((p) => ({ id: p.path, label: <span className="font-mono text-xs">{p.path}</span>, value: p.views }))}
-              />
-            ) : (
-              nothing(t)
-            )}
-          </Panel>
-          <Panel title={t("overview.sources")} description={t("overview.sourcesDetail")} footer={<a href="/sources">{t("overview.allSources")}</a>}>
-            {r.sources.length ? (
-              <BarList
-                label={t("overview.sources")}
-                items={r.sources.slice(0, 8).map((s) => ({ id: s.source ?? "", label: s.source ?? t("sources.direct"), value: s.visits }))}
-              />
-            ) : (
-              nothing(t)
-            )}
-          </Panel>
-        </OverviewGrid>
-      )}
-      {r && r.totals.visits > 0 && (
-        <OverviewGrid layout="halves">
-          <Panel title={t("overview.devices")}>
-            <DonutChart
-              label={t("overview.devices")}
-              caption={t("overview.visits")}
-              slices={r.devices.map((d, i) => ({
-                id: d.name,
-                name: devices[d.name] ?? d.name,
-                value: d.visits,
-                color: CHART_COLORS[i % CHART_COLORS.length]!,
-              }))}
-            />
-          </Panel>
-          <Panel title={t("overview.goals")} description={t("overview.goalsDetail")} footer={<a href="/behavior">{t("overview.allBehavior")}</a>}>
-            {r.goals.length ? (
-              <BarList label={t("overview.goals")} items={r.goals.map((g) => ({ id: g.name, label: g.name, value: g.visits }))} />
-            ) : (
-              <EmptyState title={t("overview.noGoals")}>{t("overview.noGoalsDetail")}</EmptyState>
-            )}
-          </Panel>
-        </OverviewGrid>
-      )}
-      {r === null && <EmptyState title={t("report.failed")} />}
-    </>
-  );
-}
-
-// ---------------------------------------------------------------- Pages
-
-function PagesPage({ call, sites, choice }: { call: Call; sites: Site[]; choice: Choice }) {
-  const t = useT();
-  const r = useReport(call, choice);
-  const columns: Column<Report["pages"][number]>[] = [
-    {
-      id: "path",
-      header: t("pages.page"),
-      cell: (p) => (
-        <span className="flex min-w-0 flex-col">
-          <span className="analytics-wrap font-mono text-xs">{p.path}</span>
-          {p.title && <span className="analytics-clamp text-xs text-fg-muted">{p.title}</span>}
-        </span>
-      ),
-    },
-    { id: "views", header: t("pages.views"), align: "right", sortValue: (p) => p.views, cell: (p) => p.views },
-    { id: "visitors", header: t("pages.visitors"), align: "right", sortValue: (p) => p.visitors, cell: (p) => p.visitors },
-    { id: "time", header: t("pages.time"), align: "right", sortValue: (p) => p.time ?? -1, cell: (p) => duration(p.time) },
-    { id: "scroll", header: t("pages.scroll"), align: "right", sortValue: (p) => p.scroll ?? -1, cell: (p) => (p.scroll === null ? "–" : `${p.scroll}%`) },
-  ];
-  const list = (rows: Report["entries"], label: string) =>
-    rows.length ? (
-      <BarList
-        label={label}
-        items={rows.map((e) => ({ id: e.path ?? "", label: <span className="font-mono text-xs">{e.path ?? "–"}</span>, value: e.visits }))}
-      />
-    ) : (
-      nothing(t)
-    );
-  return (
-    <>
-      <ReportHeader title={t("pages.title")} description={t("pages.description")} sites={sites} choice={choice} />
-      <Panel flush>
-        <DataTable
-          label={t("pages.title")}
-          columns={columns}
-          rows={r?.pages ?? []}
-          loading={r === undefined}
-          getRowId={(p) => p.path}
-          minWidth={640}
-          pageSize={50}
-          empty={nothing(t)}
-        />
-      </Panel>
-      {r && (
-        <OverviewGrid layout="halves">
-          <Panel title={t("pages.entries")} description={t("pages.entriesDetail")}>
-            {list(r.entries, t("pages.entries"))}
-          </Panel>
-          <Panel title={t("pages.exits")} description={t("pages.exitsDetail")}>
-            {list(r.exits, t("pages.exits"))}
-          </Panel>
-        </OverviewGrid>
-      )}
-    </>
-  );
-}
-
-// ---------------------------------------------------------------- Sources
-
-function SourcesPage({ call, sites, choice }: { call: Call; sites: Site[]; choice: Choice }) {
-  const t = useT();
-  const r = useReport(call, choice);
-  const named = (rows: Array<{ name: string; visits: number }>, label: string) =>
-    rows.length ? <BarList label={label} items={rows.map((b) => ({ id: b.name, label: b.name, value: b.visits }))} /> : nothing(t);
-  return (
-    <>
-      <ReportHeader title={t("sources.title")} description={t("sources.description")} sites={sites} choice={choice} />
-      <Panel title={t("sources.referrers")} description={t("sources.referrersDetail")} flush>
-        <DataTable
-          label={t("sources.referrers")}
-          columns={[
-            { id: "source", header: t("sources.source"), cell: (s) => s.source ?? <span className="text-fg-muted">{t("sources.direct")}</span> },
-            { id: "visits", header: t("sources.visits"), align: "right", sortValue: (s) => s.visits, cell: (s) => s.visits },
-            { id: "visitors", header: t("sources.visitors"), align: "right", sortValue: (s) => s.visitors, cell: (s) => s.visitors },
-          ]}
-          rows={r?.sources ?? []}
-          loading={r === undefined}
-          getRowId={(s) => s.source ?? ""}
-          minWidth={480}
-          empty={nothing(t)}
-        />
-      </Panel>
-      <Panel title={t("sources.campaigns")} description={t("sources.campaignsDetail")} flush>
-        <DataTable
-          label={t("sources.campaigns")}
-          columns={[
-            { id: "source", header: "utm_source", mono: true, cell: (c) => c.source ?? "–" },
-            { id: "medium", header: "utm_medium", mono: true, cell: (c) => c.medium ?? "–" },
-            { id: "campaign", header: "utm_campaign", mono: true, cell: (c) => c.campaign ?? "–" },
-            { id: "visits", header: t("sources.visits"), align: "right", sortValue: (c) => c.visits, cell: (c) => c.visits },
-          ]}
-          rows={r?.campaigns ?? []}
-          loading={r === undefined}
-          getRowId={(c) => `${c.source}|${c.medium}|${c.campaign}`}
-          minWidth={560}
-          empty={<EmptyState title={t("sources.noCampaigns")}>{t("sources.noCampaignsDetail")}</EmptyState>}
-        />
-      </Panel>
-      {r && (
-        <OverviewGrid layout="halves">
-          <Panel title={t("sources.browsers")}>{named(r.browsers, t("sources.browsers"))}</Panel>
-          <Panel title={t("sources.systems")}>{named(r.systems, t("sources.systems"))}</Panel>
-        </OverviewGrid>
-      )}
-    </>
-  );
-}
-
-// ---------------------------------------------------------------- Behaviour
-
-function BehaviorPage({ call, sites, choice }: { call: Call; sites: Site[]; choice: Choice }) {
-  const t = useT();
-  const r = useReport(call, choice);
-  return (
-    <>
-      <ReportHeader title={t("behavior.title")} description={t("behavior.description")} sites={sites} choice={choice} />
-      <Panel title={t("behavior.goals")} description={t("behavior.goalsDetail")} flush>
-        <DataTable
-          label={t("behavior.goals")}
-          columns={[
-            { id: "name", header: t("behavior.goal"), cell: (g) => <span className="font-medium">{g.name}</span> },
-            { id: "when", header: t("behavior.reached"), mono: true, cell: (g) => (g.path ? g.path : t("behavior.event", { name: g.event ?? "" })) },
-            { id: "visits", header: t("behavior.visits"), align: "right", sortValue: (g) => g.visits, cell: (g) => g.visits },
-            { id: "rate", header: t("behavior.rate"), align: "right", sortValue: (g) => g.rate, cell: (g) => percent(g.rate) },
-          ]}
-          rows={r?.goals ?? []}
-          loading={r === undefined}
-          getRowId={(g) => g.name}
-          minWidth={560}
-          empty={<EmptyState title={t("overview.noGoals")}>{t("overview.noGoalsDetail")}</EmptyState>}
-        />
-      </Panel>
-      <Panel title={t("behavior.events")} description={t("behavior.eventsDetail")} flush>
-        <DataTable
-          label={t("behavior.events")}
-          columns={[
-            { id: "name", header: t("behavior.name"), mono: true, cell: (e) => e.name },
-            { id: "count", header: t("behavior.count"), align: "right", sortValue: (e) => e.count, cell: (e) => e.count },
-            { id: "visitors", header: t("behavior.visitors"), align: "right", sortValue: (e) => e.visitors, cell: (e) => e.visitors },
-          ]}
-          rows={r?.events ?? []}
-          loading={r === undefined}
-          getRowId={(e) => e.name}
-          minWidth={480}
-          empty={<EmptyState title={t("behavior.noEvents")}>{t("behavior.noEventsDetail")}</EmptyState>}
-        />
-      </Panel>
-      <Panel title={t("behavior.clicks")} description={t("behavior.clicksDetail")} flush>
-        <DataTable
-          label={t("behavior.clicks")}
-          columns={[
-            {
-              id: "element",
-              header: t("behavior.element"),
-              cell: (c) => (
-                <span className="flex min-w-0 flex-col">
-                  <span className="analytics-clamp">{c.text ?? "–"}</span>
-                  <span className="analytics-wrap font-mono text-xs text-fg-muted">{c.target}</span>
-                </span>
-              ),
-            },
-            { id: "href", header: t("behavior.link"), cell: (c) => <span className="analytics-wrap font-mono text-xs">{c.href ?? "–"}</span> },
-            { id: "count", header: t("behavior.count"), align: "right", sortValue: (c) => c.count, cell: (c) => c.count },
-            { id: "visitors", header: t("behavior.visitors"), align: "right", sortValue: (c) => c.visitors, cell: (c) => c.visitors },
-          ]}
-          rows={r?.clicks ?? []}
-          loading={r === undefined}
-          getRowId={(c) => `${c.target}|${c.text}|${c.href}`}
-          minWidth={720}
-          empty={nothing(t)}
-        />
-      </Panel>
-    </>
-  );
 }
 
 // ---------------------------------------------------------------- Visits
 
-function VisitsPage({ call, sites, choice }: { call: Call; sites: Site[]; choice: Choice }) {
+function VisitsPage() {
   const t = useT();
+  const f = useFormat();
   const ago = useAgo();
+  const r = useReport();
+  const { call, query: reportQuery, site } = r;
   const [q, setQ] = useState("");
   const [rows, setRows] = useState<Visit[]>();
   const [more, setMore] = useState<string>();
   const query = useCallback(
     (cursor?: string) => {
-      const p = new URLSearchParams({ site: choice.site, limit: "100" });
+      const extra: Record<string, string> = { limit: "100" };
       // An id the site gave the person is searched as a user; the script's ids start the same way every time.
       const id = q.trim();
-      if (id) p.set(/^[A-Za-z0-9_-]{22}$/.test(id) ? "visitor" : "user", id);
-      if (cursor) p.set("cursor", cursor);
-      return call<{ visits: Visit[]; nextCursor?: string }>(`/api/v1/visits?${p}`);
+      if (id) extra[/^[A-Za-z0-9_-]{22}$/.test(id) ? "visitor" : "user"] = id;
+      if (cursor) extra.cursor = cursor;
+      return call<{ visits: Visit[]; nextCursor?: string }>(`/api/v1/visits?${reportQuery(extra, { compare: false })}`);
     },
-    [call, choice.site, q],
+    [call, reportQuery, q],
   );
   useEffect(() => {
-    if (!choice.site) return;
+    if (!site) return;
     void query().then(
       (r) => (setRows(r.visits), setMore(r.nextCursor)),
       () => setRows([]),
     );
-  }, [query, choice.site]);
+  }, [query, site]);
   const loadMore = () => more && query(more).then((r) => (setRows((x) => [...(x ?? []), ...r.visits]), setMore(r.nextCursor)));
   const columns: Column<Visit>[] = [
     {
@@ -397,29 +151,33 @@ function VisitsPage({ call, sites, choice }: { call: Call; sites: Site[]; choice
     },
     { id: "pages", header: t("visits.pages"), align: "right", sortValue: (v) => v.pageviews, cell: (v) => v.pageviews },
     { id: "length", header: t("visits.length"), align: "right", sortValue: (v) => v.duration, cell: (v) => duration(v.duration) },
-    { id: "source", header: t("visits.source"), cell: (v) => <span className="text-xs">{v.source ?? t("sources.direct")}</span> },
+    { id: "source", header: t("visits.source"), cell: (v) => <span className="text-xs">{f.source(v.source)}</span> },
+    {
+      id: "place",
+      header: t("visits.place"),
+      cell: (v) => (
+        <span className="text-xs">
+          {v.country ? (
+            <>
+              <Flag code={v.country} /> {v.city ? `${v.city}, ` : ""}
+              {f.country(v.country)}
+            </>
+          ) : (
+            "–"
+          )}
+        </span>
+      ),
+    },
     { id: "device", header: t("visits.device"), cell: (v) => <span className="text-xs">{`${v.browser}, ${v.os}`}</span> },
     { id: "user", header: t("visits.user"), mono: true, cell: (v) => v.user ?? "–" },
   ];
   return (
-    <>
-      <PageHeader
-        title={t("visits.title")}
-        description={t("visits.description")}
-        actions={
-          <span className="flex flex-wrap items-center gap-2">
-            <SearchInput label={t("visits.search")} className="w-64" value={q} onChange={(e) => setQ(e.target.value)} />
-            {sites.length > 1 && (
-              <SelectField
-                aria-label={t("choice.site")}
-                value={choice.site}
-                onChange={(e) => choice.setSite(e.target.value)}
-                options={sites.map((s) => ({ value: s.name, label: s.name }))}
-              />
-            )}
-          </span>
-        }
-      />
+    <Report
+      noCompare
+      title={t("visits.title")}
+      description={t("visits.description")}
+      actions={<SearchInput label={t("visits.search")} className="w-64" value={q} onChange={(e) => setQ(e.target.value)} />}
+    >
       <Panel
         flush
         footer={
@@ -436,24 +194,26 @@ function VisitsPage({ call, sites, choice }: { call: Call; sites: Site[]; choice
           rows={rows ?? []}
           loading={!rows}
           getRowId={(v) => v.id}
-          minWidth={860}
+          minWidth={960}
           pageSize={50}
-          empty={nothing(t)}
+          empty={<Nothing />}
         />
       </Panel>
-    </>
+    </Report>
   );
 }
 
-function VisitPage({ call, id, choice }: { call: Call; id: string; choice: Choice }) {
+function VisitPage({ id }: { id: string }) {
   const t = useT();
+  const f = useFormat();
+  const { call, site } = useReport();
   const { can } = useAuth();
   const [visit, setVisit] = useState<VisitDetail | null>();
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string>();
   useEffect(
-    () => void call<VisitDetail>(`/api/v1/visits/${encodeURIComponent(id)}?site=${encodeURIComponent(choice.site)}`).then(setVisit, () => setVisit(null)),
-    [call, id, choice.site],
+    () => void call<VisitDetail>(`/api/v1/visits/${encodeURIComponent(id)}?site=${encodeURIComponent(site)}`).then(setVisit, () => setVisit(null)),
+    [call, id, site],
   );
 
   const visitor = visit ? `/api/v1/visitors/${encodeURIComponent(visit.visitor)}?site=${encodeURIComponent(visit.site)}` : "";
@@ -517,7 +277,18 @@ function VisitPage({ call, id, choice }: { call: Call; id: string; choice: Choic
     <>
       <PageHeader
         title={t("visit.title")}
-        description={visit ? `${time(visit.startedAt)} · ${visit.browser}, ${visit.os} · ${visit.source ?? t("sources.direct")}` : undefined}
+        description={
+          visit
+            ? [
+                time(visit.startedAt),
+                `${visit.browser}, ${visit.os}`,
+                f.source(visit.source),
+                visit.country ? `${visit.city ? `${visit.city}, ` : ""}${f.country(visit.country)}` : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")
+            : undefined
+        }
         actions={
           visit && (
             <>
@@ -551,8 +322,11 @@ function VisitPage({ call, id, choice }: { call: Call; id: string; choice: Choic
           <div className="flex flex-wrap items-center gap-1.5">
             <Badge mono>{t("visit.visitor", { id: visit.visitor })}</Badge>
             {visit.user && <Badge mono>{t("visit.user", { id: visit.user })}</Badge>}
+            {visit.channel && <Badge>{f.channel(visit.channel)}</Badge>}
             {visit.utm.campaign && <Badge>{t("visit.campaign", { name: visit.utm.campaign })}</Badge>}
-            <Badge>{t(`device.${visit.device}` as "device.desktop")}</Badge>
+            <Badge>{f.device(visit.device)}</Badge>
+            {visit.returning !== null && <Badge>{visit.returning ? t("value.returning") : t("value.new")}</Badge>}
+            {visit.language && <Badge mono>{visit.language}</Badge>}
             {visit.rage > 0 && <Badge tone="warning">{t("replay.rage", { count: visit.rage })}</Badge>}
           </div>
           <Panel title={t("visit.timeline")} description={t("visit.timelineDetail")}>
@@ -618,6 +392,12 @@ const EXAMPLE = `sites:
           - { name: Signed up, event: signup }
     forms: true           # which form fields are entered and left, never what they hold
     replays: { sample: 10%, keep: 30d }   # record a share of visits, with every field masked
+    search: { path: /search, param: q }   # what people search on the site, masked
+    notFound: { title: Page not found }   # or <meta name="analytics" content="404"> on the page
+    channels:             # your own sources in a channel, before the built-in rules
+      email: [partner-newsletter]
+    vitals: true          # Core Web Vitals (LCP, INP, CLS) of each page
+    location: city        # city, region, country or off; the IP address is never kept
     # serverKey: ANALYTICS_SHOP_KEY   # the variable that holds the key for events from your servers`;
 
 function FileState({ summary }: { summary?: Summary }) {
@@ -664,6 +444,9 @@ function SitesPage({ sites, summary }: { sites: Site[]; summary?: Summary }) {
           {s.funnels.length > 0 && <Badge>{t("sites.funnels", { count: s.funnels.length })}</Badge>}
           {s.forms && <Badge>{t("sites.forms")}</Badge>}
           {s.replays && <Badge tone="info">{t("sites.replays", { sample: s.replays.sample })}</Badge>}
+          {s.search && <Badge>{t("sites.search")}</Badge>}
+          {s.vitals && <Badge>{t("sites.vitals")}</Badge>}
+          {s.location && <Badge>{t(`sites.location_${s.location}`)}</Badge>}
         </span>
       ),
     },
@@ -744,8 +527,6 @@ openasy.consent(false);                       // stops, and deletes what was kep
   );
 }
 
-// ---------------------------------------------------------------- Shell
-
 /** Account, Members, Sign-in and API tokens: the screens come from @openasy/auth. */
 function SettingsPage({ page }: { page: "account" | "members" | "signin" | "tokens" }) {
   const t = useT();
@@ -775,13 +556,18 @@ function Product() {
   const [, setLocale] = useLocalePreference();
   const { me, can } = useAuth();
   const account = useAccountMenu();
-  const route = parseRoute(usePath());
+  const path = usePath();
+  const route = parseRoute(path);
   const [summary, setSummary] = useState<Summary>();
   const [sites, setSites] = useState<Site[]>();
   const [products, setProducts] = useState<Array<ProductLink & { id: ProductId }>>([]);
   const call = useApi();
-  const choice = useChoice(sites);
-  const onSearch = useMemo(() => search(call, msg, choice.site), [call, msg, choice.site]);
+
+  // An address of a report from before opens where that report is now.
+  const moved = MOVED[path.replace(/^\//, "").split("/")[0] ?? ""];
+  useEffect(() => {
+    if (moved) navigate(moved + location.search, { replace: true });
+  }, [moved]);
 
   // The install's other products (OPENASY_PRODUCTS), for the switcher; ids this UI does not know are left out.
   useEffect(() => {
@@ -807,20 +593,26 @@ function Product() {
 
   const nav = [
     { id: "overview", label: msg("nav.overview"), icon: LayoutDashboard },
-    { id: "pages", label: msg("nav.pages"), icon: FileText },
-    { id: "sources", label: msg("nav.sources"), icon: Share2 },
+    { id: "realtime", label: msg("nav.realtime"), icon: Activity, count: summary?.live || undefined },
+    { id: "acquisition", label: msg("nav.acquisition"), icon: Share2 },
+    { id: "visitors", label: msg("nav.visitors"), icon: Users },
     { id: "behavior", label: msg("nav.behavior"), icon: MousePointerClick },
-    { id: "funnels", label: msg("nav.funnels"), icon: Funnel },
-    { id: "forms", label: msg("nav.forms"), icon: ClipboardList },
+    { id: "conversions", label: msg("nav.conversions"), icon: Target },
+    ...(sites?.some((s) => s.ecommerce) ? [{ id: "ecommerce", label: msg("nav.ecommerce"), icon: ShoppingCart }] : []),
+    { id: "retention", label: msg("nav.retention"), icon: Repeat },
+    { id: "performance", label: msg("nav.performance"), icon: Gauge },
+    { id: "search", label: msg("nav.search"), icon: Search },
     { id: "heatmaps", label: msg("nav.heatmaps"), icon: Flame },
     { id: "replays", label: msg("nav.replays"), icon: CirclePlay },
-    { id: "visits", label: msg("nav.visits"), icon: RouteIcon, count: summary?.live || undefined },
+    { id: "visits", label: msg("nav.visits"), icon: RouteIcon },
+    { id: "sharing", label: msg("nav.sharing"), icon: Send },
     { id: "sites", label: msg("nav.sites"), icon: Globe, count: summary?.sites },
   ];
   const footerNav = [
+    { id: "settings", label: msg("nav.settings"), icon: FileCode },
     ...(can("admin")
       ? [
-          { id: "members", label: msg("nav.members"), icon: Users },
+          { id: "members", label: msg("nav.members"), icon: UserCog },
           { id: "signin", label: msg("nav.signIn"), icon: LogIn },
           { id: "tokens", label: msg("nav.apiTokens"), icon: KeyRound },
         ]
@@ -829,9 +621,112 @@ function Product() {
   ];
   const active = route.page === "visit" ? "visits" : route.page === "replay" ? "replays" : route.page;
   const roleName = me.user.role.charAt(0).toUpperCase() + me.user.role.slice(1);
-  const reports = ["overview", "pages", "sources", "behavior", "funnels", "forms", "heatmaps", "replays", "visits"].includes(route.page);
+  const reports = [
+    "overview",
+    "realtime",
+    "acquisition",
+    "visitors",
+    "behavior",
+    "conversions",
+    "ecommerce",
+    "retention",
+    "search",
+    "sharing",
+    "performance",
+    "heatmaps",
+    "replays",
+    "replay",
+    "visits",
+    "visit",
+  ].includes(route.page);
   const list = sites ?? [];
+  const tab = "tab" in route ? route.tab : undefined;
 
+  return (
+    <ReportProvider sites={sites}>
+      <Shell
+        nav={nav}
+        footerNav={account.settings(footerNav)}
+        active={active}
+        products={products}
+        user={{ name: me.user.name, role: roleName, ...account.user }}
+        theme={theme}
+        setTheme={setTheme}
+        setLocale={(code) => setLocale(toLocale(code))}
+      >
+        {reports && sites && sites.length === 0 ? (
+          <SetupPage summary={summary} />
+        ) : reports && !sites ? null : route.page === "overview" ? (
+          <OverviewPage />
+        ) : route.page === "realtime" ? (
+          <RealtimePage />
+        ) : route.page === "acquisition" ? (
+          <AcquisitionPage at={tab} />
+        ) : route.page === "visitors" ? (
+          <VisitorsPage at={tab} summary={summary} />
+        ) : route.page === "behavior" ? (
+          <BehaviorPage at={tab} />
+        ) : route.page === "conversions" ? (
+          <ConversionsPage at={tab} />
+        ) : route.page === "ecommerce" ? (
+          <EcommercePage at={tab} />
+        ) : route.page === "retention" ? (
+          <RetentionPage at={tab} />
+        ) : route.page === "search" ? (
+          <SearchPage at={tab} />
+        ) : route.page === "sharing" ? (
+          <SharingPage at={tab} />
+        ) : route.page === "performance" ? (
+          <PerformancePage />
+        ) : route.page === "heatmaps" ? (
+          <HeatmapsPage />
+        ) : route.page === "replays" ? (
+          <ReplaysPage />
+        ) : route.page === "replay" ? (
+          <ReplayPage key={route.id} id={route.id} />
+        ) : route.page === "visits" ? (
+          <VisitsPage />
+        ) : route.page === "visit" ? (
+          <VisitPage key={route.id} id={route.id} />
+        ) : route.page === "sites" ? (
+          <SitesPage sites={list} summary={summary} />
+        ) : route.page === "settings" ? (
+          <SettingsFilePage sites={list} summary={summary} />
+        ) : route.page === "account" || route.page === "members" || route.page === "signin" || route.page === "tokens" ? (
+          <SettingsPage page={route.page} />
+        ) : (
+          <SetupPage summary={summary} />
+        )}
+      </Shell>
+    </ReportProvider>
+  );
+}
+
+/** The product's frame: navigation, search, the product switcher, the account menu, theme and language. */
+function Shell({
+  nav,
+  footerNav,
+  active,
+  products,
+  user,
+  theme,
+  setTheme,
+  setLocale,
+  children,
+}: {
+  nav: Parameters<typeof AppShell>[0]["nav"];
+  footerNav: Parameters<typeof AppShell>[0]["footerNav"];
+  active: string;
+  products: Array<ProductLink & { id: ProductId }>;
+  user: Parameters<typeof AppShell>[0]["user"];
+  theme: Parameters<typeof AppShell>[0]["theme"];
+  setTheme: (t: NonNullable<Parameters<typeof AppShell>[0]["theme"]>) => void;
+  setLocale: (code: string) => void;
+  children: React.ReactNode;
+}) {
+  const msg = useT();
+  const r = useReport();
+  const onSearch = useMemo(() => search(r.call, msg, r.site), [r.call, msg, r.site]);
   return (
     <AppShell
       product="analytics"
@@ -839,55 +734,21 @@ function Product() {
       about={colophon}
       nav={nav}
       activeNav={active}
-      onNavigate={(id) => navigate(`/${id}`)}
+      // Moving between reports keeps the site, period, comparison and filters.
+      onNavigate={(id) => r.go(`/${id}`)}
       connectedProducts={products.map((p) => p.id)}
       onSwitchProduct={(id) => {
         const to = products.find((p) => p.id === id);
         if (to) window.location.assign(to.url);
       }}
-      footerNav={account.settings(footerNav)}
+      footerNav={footerNav}
       setup
-      user={{ name: me.user.name, role: roleName, ...account.user }}
+      user={user}
       theme={theme}
       onThemeChange={setTheme}
-      onLanguageChange={(code) => setLocale(toLocale(code))}
+      onLanguageChange={setLocale}
     >
-      {summary && summary.live > 0 && reports && (
-        <span className="flex items-center gap-1.5 text-xs text-fg-muted">
-          <Radio className="size-3.5 text-success" aria-hidden /> {msg("live", { count: summary.live })}
-        </span>
-      )}
-      {reports && sites && sites.length === 0 ? (
-        <SetupPage summary={summary} />
-      ) : route.page === "overview" ? (
-        <OverviewPage call={call} sites={list} choice={choice} />
-      ) : route.page === "pages" ? (
-        <PagesPage call={call} sites={list} choice={choice} />
-      ) : route.page === "sources" ? (
-        <SourcesPage call={call} sites={list} choice={choice} />
-      ) : route.page === "behavior" ? (
-        <BehaviorPage call={call} sites={list} choice={choice} />
-      ) : route.page === "funnels" ? (
-        <FunnelsPage call={call} sites={list} choice={choice} />
-      ) : route.page === "forms" ? (
-        <FormsPage call={call} sites={list} choice={choice} />
-      ) : route.page === "heatmaps" ? (
-        <HeatmapsPage call={call} sites={list} choice={choice} />
-      ) : route.page === "replays" ? (
-        <ReplaysPage call={call} sites={list} choice={choice} />
-      ) : route.page === "replay" ? (
-        <ReplayPage key={route.id} call={call} id={route.id} choice={choice} />
-      ) : route.page === "visits" ? (
-        <VisitsPage call={call} sites={list} choice={choice} />
-      ) : route.page === "visit" ? (
-        <VisitPage key={route.id} call={call} id={route.id} choice={choice} />
-      ) : route.page === "sites" ? (
-        <SitesPage sites={list} summary={summary} />
-      ) : route.page === "account" || route.page === "members" || route.page === "signin" || route.page === "tokens" ? (
-        <SettingsPage page={route.page} />
-      ) : (
-        <SetupPage summary={summary} />
-      )}
+      {children}
     </AppShell>
   );
 }
@@ -896,12 +757,18 @@ export function App() {
   const installBrand = useInstallBrand();
   const [theme] = useThemePreference();
   const [locale] = useLocalePreference();
+  const shared = /^\/shared\/([A-Za-z0-9_-]{20,64})\/?$/.exec(location.pathname)?.[1];
   return (
     // The install's brand from config/brand.env (ADR 0053); OpenAsy's own look where it sets none.
     <BrandProvider theme={theme} locale={locale} brand={{ name: "OpenAsy", organization: undefined, ...installBrand }} className="min-h-screen">
-      <AuthGate product="OpenAsy Analytics">
-        <Product />
-      </AuthGate>
+      {shared ? (
+        // A shared link opens without signing in: read-only totals of the link's sections.
+        <SharedDashboard token={shared} />
+      ) : (
+        <AuthGate product="OpenAsy Analytics">
+          <Product />
+        </AuthGate>
+      )}
     </BrandProvider>
   );
 }
