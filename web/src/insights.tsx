@@ -400,7 +400,7 @@ export function ReplayPage({ id }: { id: string }) {
           }
         >
           <div ref={box} className="relative overflow-hidden bg-subtle" style={{ height: 480 }}>
-            <div ref={stage} className="absolute top-0 left-0" />
+            <div ref={stage} className="absolute top-0 start-0" />
           </div>
         </Panel>
       )}

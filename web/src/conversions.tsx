@@ -364,7 +364,7 @@ function FormsTab() {
                 onClick={() => setPicked(x.form)}
                 aria-current={x.form === form.form ? "true" : undefined}
                 className={cn(
-                  "analytics-pick flex w-full flex-col px-3 py-1.5 text-left",
+                  "analytics-pick flex w-full flex-col px-3 py-1.5 text-start",
                   x.form === form.form ? "bg-accent-soft text-accent-text" : "text-fg hover:bg-canvas",
                 )}
               >

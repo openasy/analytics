@@ -62,7 +62,7 @@ import { RetentionPage } from "./retention.tsx";
 import { SearchPage } from "./searchengines.tsx";
 import { SharedDashboard, SharingPage } from "./sharing.tsx";
 import { useFormat } from "./format.ts";
-import { useT } from "./i18n.ts";
+import { useT, viewerLocale, setViewerLocale } from "./i18n.ts";
 import { HeatmapsPage, ReplayPage, ReplaysPage } from "./insights.tsx";
 import { OverviewPage, RealtimePage } from "./overview.tsx";
 import { PerformancePage } from "./performance.tsx";
@@ -336,7 +336,7 @@ function VisitPage({ id }: { id: string }) {
                 return (
                   <li key={i} className="flex gap-3 text-sm">
                     <span className="w-24 shrink-0 font-mono text-xs whitespace-nowrap text-fg-muted">
-                      {new Date(e.at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                      {new Date(e.at).toLocaleTimeString(viewerLocale(), { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
                     </span>
                     <span className="flex min-w-0 flex-col">
                       <span>
@@ -757,6 +757,7 @@ export function App() {
   const installBrand = useInstallBrand();
   const [theme] = useThemePreference();
   const [locale] = useLocalePreference();
+  setViewerLocale(locale);
   const shared = /^\/shared\/([A-Za-z0-9_-]{20,64})\/?$/.exec(location.pathname)?.[1];
   return (
     // The install's brand from config/brand.env (ADR 0053); OpenAsy's own look where it sets none.

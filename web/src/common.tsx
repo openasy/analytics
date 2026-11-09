@@ -2,6 +2,7 @@
 import { useAuth } from "@openasy/auth/react";
 import { useCallback, type ReactNode } from "react";
 import { api, MfaSetupRequired, Unauthorized } from "./api.ts";
+import { viewerLocale } from "./i18n.ts";
 
 /** Data loading with the session; when it ends, the sign-in screen comes back. */
 export function useApi() {
@@ -36,5 +37,5 @@ export function duration(seconds: number | null): string {
   return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
 }
 export const percent = (v: number) => `${Math.round(v * 100)}%`;
-export const shortDay = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
-export const time = (iso: string) => new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+export const shortDay = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString(viewerLocale(), { month: "short", day: "numeric", timeZone: "UTC" });
+export const time = (iso: string) => new Date(iso).toLocaleString(viewerLocale(), { dateStyle: "medium", timeStyle: "short" });

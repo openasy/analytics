@@ -805,7 +805,7 @@ export function ShareBar({ part, whole }: { part: number; whole: number }) {
       <span className="analytics-meter h-2 overflow-hidden rounded bg-subtle">
         <span className="block h-2 rounded" style={{ width: `${whole ? (part / whole) * 100 : 0}%`, background: "var(--oa-accent)" }} />
       </span>
-      <span className="w-12 text-right font-mono text-xs tabular-nums">{f.share(part, whole)}</span>
+      <span className="w-12 text-end font-mono text-xs tabular-nums">{f.share(part, whole)}</span>
     </span>
   );
 }
@@ -941,10 +941,10 @@ export function CohortGrid({
       <table aria-label={label} className="w-full min-w-[640px] border-separate border-spacing-[2px] text-xs">
         <thead>
           <tr className="text-2xs text-fg-muted">
-            <th scope="col" className="px-2 py-1 text-left font-medium">
+            <th scope="col" className="px-2 py-1 text-start font-medium">
               {t("retention.firstSeen")}
             </th>
-            <th scope="col" className="px-2 py-1 text-right font-medium">
+            <th scope="col" className="px-2 py-1 text-end font-medium">
               {t("table.visitors")}
             </th>
             {Array.from({ length: width }, (_, i) => (
@@ -957,10 +957,10 @@ export function CohortGrid({
         <tbody>
           {cohorts.map((c) => (
             <tr key={c.id}>
-              <th scope="row" className="px-2 py-1.5 text-left font-medium whitespace-nowrap text-fg">
+              <th scope="row" className="px-2 py-1.5 text-start font-medium whitespace-nowrap text-fg">
                 {t("retention.weekOf", { day: c.label })}
               </th>
-              <td className="px-2 py-1.5 text-right font-mono text-fg-muted tabular-nums">{f.num(c.size)}</td>
+              <td className="px-2 py-1.5 text-end font-mono text-fg-muted tabular-nums">{f.num(c.size)}</td>
               {Array.from({ length: width }, (_, i) => {
                 const v = c.values[i];
                 return (
