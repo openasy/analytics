@@ -1,6 +1,6 @@
 {
   "name": "@openasy/analytics",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "OpenAsy Analytics: how people use your websites, from one script tag, kept in the install and set in a file.",
   "license": "AGPL-3.0-only",

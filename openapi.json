@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "OpenAsy Analytics API",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "summary": "How people use your websites, from one script tag, kept in the install.",
     "description": "Every screen of analytics uses this API, and so can your scripts (ADR 0014). Within `/api/v1` changes are additive only; anything removed is deprecated first (ADR 0024). Errors use Problem Details (RFC 9457).\n\nPages send what happened with `/api/v1/collect`, from the site's script at `/s/<site>.js`. Sites are set in the sites file, never through the API. Everything else takes the session of a signed-in person or an API token, and each operation names the role it needs (`x-openasy-role`: viewer, editor, admin; ADR 0003).\n\nSign-in, members and API tokens are under `/api/v1/auth`, provided by [@openasy/auth](https://github.com/openasy/auth#routes).\n\nEvery report takes `days`, any number of `filter` parameters and `compare`. A filter is `dimension:is:values` or `dimension:not:values`, the values separated by `|`, such as `filter=country:is:DE|AT&filter=channel:not:direct`; `(none)` matches a visit without a value, and `*` in a page, entry, exit or referrer matches any characters. `compare=previous` (the as many days just before) or `compare=year` (the same days a year before) adds the same report for that period under `compare`. Totals count `bounceRate` as GA4 does: the share of visits that were not engaged (longer than 10 seconds, two page views or more, or a goal reached).",
     "license": {
